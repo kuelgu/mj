@@ -1,0 +1,32 @@
+{
+  "name": "riichi-mahjong-server",
+  "version": "1.0.0",
+  "description": "Server-authoritative riichi mahjong (4-player) online game",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --loader ts-node/esm --test src/**/*.test.ts",
+    "test:watch": "node --loader ts-node/esm --test --watch src/**/*.test.ts",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "keywords": [
+    "mahjong",
+    "riichi",
+    "game-server"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.10",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  }
+}
