@@ -1,0 +1,21 @@
+{
+  "variant": "riichi-4p",
+  "multipleRon": {
+    "mode": "allow_up_to_3",
+    "atamahane": false,
+    "riichiBetDistribution": "seat_order_nearest_to_discarder"
+  },
+  "scoring": {
+    "kiriageMangan": true,
+    "kazoeYakuman": "yakuman"
+  },
+  "pao": {
+    "enabled": true,
+    "paymentStyle": "configurable_full_or_split",
+    "applyTo": ["daisangen", "daisuushi", "tsuuiisou_optional", "suukantsu_optional"]
+  },
+  "nagashiMangan": {
+    "enabled": true,
+    "treatAsWin": true
+  }
+}
