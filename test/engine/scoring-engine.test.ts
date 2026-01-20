@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ScoringEngine } from './scoring-engine.js';
-import { RuleConfig } from '../config/rule-config.js';
-import { HandEvaluation, PaoInfo } from '../types/scoring.js';
-import { Wind } from '../types/game-state.js';
+import { ScoringEngine } from '../../src/engine/scoring-engine.js';
+import { RuleConfig } from '../../src/config/rule-config.js';
+import { HandEvaluation, PaoInfo } from '../../src/types/scoring.js';
+import { Wind } from '../../src/types/game-state.js';
 
 /**
  * Test suite for scoring engine
@@ -105,7 +105,8 @@ describe('ScoringEngine - Kiriage Mangan Check', () => {
     const score = engine.calculateScore(hand, false, false);
 
     assert.equal(score.isKiriageMangan, false, 'Should not be kiriage mangan');
-    assert.equal(score.score, 7680, 'Should calculate normal score');
+    //assert.equal(score.score, 7680, 'Should calculate normal score');
+    assert.equal(score.score, 7700, 'Should calculate normal score');
   });
 
   it('should round up for dealer 4 han 30 fu to dealer mangan', () => {
@@ -334,8 +335,8 @@ describe('ScoringEngine - Multiple Ron Payment', () => {
     const score = engine.calculateScore(hand, false, false);
 
     const winners = [
-      { wind: 'south' as Wind, score },  // 1 seat away from west
-      { wind: 'east' as Wind, score }    // 3 seats away from west
+      { wind: 'north' as Wind, score },  // 1 seat away from west (west -> north)
+      { wind: 'east' as Wind, score }    // 2 seats away from west (west -> north -> east)
     ];
 
     const payments = engine.calculateMultipleRonPayments(
@@ -346,12 +347,13 @@ describe('ScoringEngine - Multiple Ron Payment', () => {
       allSeats
     );
 
-    // South is closer to west in seat order (west -> north -> east -> south)
-    // So south should get all riichi sticks
-    const southPayment = payments.find(p => p.winner === 'south');
+    // Turn order from west: west -> north -> east -> south
+    // North is 1 seat away, East is 2 seats away
+    // So north should get all riichi sticks
+    const northPayment = payments.find(p => p.winner === 'north');
     const eastPayment = payments.find(p => p.winner === 'east');
 
-    assert.equal(southPayment!.riichiSticksWon, 3, 'South (nearest) should get riichi sticks');
+    assert.equal(northPayment!.riichiSticksWon, 3, 'North (nearest) should get riichi sticks');
     assert.equal(eastPayment!.riichiSticksWon, 0, 'East should get no riichi sticks');
   });
 

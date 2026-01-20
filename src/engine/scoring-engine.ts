@@ -6,7 +6,7 @@ import { Wind } from '../types/game-state.js';
  * Pure scoring engine - no side effects, only calculations
  */
 export class ScoringEngine {
-  constructor(private rules: RuleConfig) {}
+  constructor(private rules: RuleConfig) { }
 
   /**
    * Calculate score for a winning hand
@@ -297,9 +297,10 @@ export class ScoringEngine {
 
     if (pao) {
       // BRANCHING POINT: PAO_PAYMENT_CALCULATION
+      // For pao, use the full ron score (total amount) not per-player tsumo
       const baseScore = isDealer
-        ? score.dealerScore!.tsumo
-        : score.nonDealerScore!.ron;
+        ? score.dealerScore!.ron
+        : score.score;
 
       const paoPayment = this.calculatePaoPayment(
         baseScore,

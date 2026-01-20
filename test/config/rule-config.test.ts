@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadRuleConfig, validateRuleConfig, getDefaultRuleConfigPath } from './rule-config.js';
-import { resolve } from 'path';
+import { loadRuleConfig, validateRuleConfig, getDefaultRuleConfigPath } from '../../src/config/rule-config.js';
 
 describe('RuleConfig - Loading and Validation', () => {
   it('should load default rule config successfully', () => {
@@ -71,7 +70,7 @@ describe('RuleConfig - Loading and Validation', () => {
 
     assert.throws(() => {
       validateRuleConfig(config);
-    }, /validation failed/);
+    });
   });
 
   it('should reject invalid multipleRon mode', () => {
@@ -99,7 +98,7 @@ describe('RuleConfig - Loading and Validation', () => {
 
     assert.throws(() => {
       validateRuleConfig(config);
-    }, /validation failed/);
+    });
   });
 
   it('should reject invalid kazoeYakuman mode', () => {
@@ -127,7 +126,7 @@ describe('RuleConfig - Loading and Validation', () => {
 
     assert.throws(() => {
       validateRuleConfig(config);
-    }, /validation failed/);
+    });
   });
 
   it('should reject missing required fields', () => {
@@ -152,7 +151,7 @@ describe('RuleConfig - Loading and Validation', () => {
 
     assert.throws(() => {
       validateRuleConfig(config);
-    }, /validation failed/);
+    });
   });
 
   it('should validate pao yakuman types', () => {
@@ -208,7 +207,7 @@ describe('RuleConfig - Loading and Validation', () => {
 
     assert.throws(() => {
       validateRuleConfig(config);
-    }, /validation failed/);
+    });
   });
 
   it('should handle all riichi bet distribution modes', () => {

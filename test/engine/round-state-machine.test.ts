@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { RoundStateMachine, BRANCHING_POINTS_DOCUMENTATION } from './round-state-machine.js';
-import { RuleConfig } from '../config/rule-config.js';
-import { GameState } from '../types/game-state.js';
+import { RoundStateMachine, BRANCHING_POINTS_DOCUMENTATION } from '../../src/engine/round-state-machine.js';
+import { RuleConfig } from '../../src/config/rule-config.js';
+import { GameState } from '../../src/types/game-state.js';
 
 /**
  * Test suite for round state machine
@@ -83,7 +83,7 @@ function createInitialState(): GameState {
         isDealer: false
       }
     ],
-    wall: [],
+    wall: [{ id: 'placeholder', suit: 'man', rank: 1 }],  // Non-empty to avoid exhaustive draw
     deadWall: [],
     doraIndicators: [],
     uraDoraIndicators: [],
@@ -123,7 +123,7 @@ describe('RoundStateMachine - Basic State Transitions', () => {
     state.phase = 'playing';
     const machine = new RoundStateMachine(defaultRules, state);
 
-    const result = machine.transition({ type: 'DRAW', player: 'east' });
+    const result = machine.transition({ type: 'DRAW_TILE', player: 'east' });
 
     assert.equal(result.newPhase, 'playing');
     assert.ok(result.events.some(e => e.includes('drew a tile')));
@@ -239,6 +239,9 @@ describe('RoundStateMachine - BRANCHING POINT: PAO_CHECK', () => {
       winners: []
     });
 
+    // Use result to avoid unused variable error
+    void result;
+
     // When no explicit transition is defined, it goes to scoring
     // with PAO_CHECK
     // Note: This is simplified; real implementation would handle this differently
@@ -264,6 +267,9 @@ describe('RoundStateMachine - BRANCHING POINT: HONBA_UPDATE', () => {
     state.phase = 'draw';
     const machine = new RoundStateMachine(defaultRules, state);
 
+    // Use machine to avoid unused variable error  
+    void machine;
+
     // Transition through draw phase
     // Note: Actual implementation may vary
   });
@@ -287,11 +293,11 @@ describe('RoundStateMachine - Branching Points Documentation', () => {
 
     expectedBranchingPoints.forEach(point => {
       assert.ok(
-        BRANCHING_POINTS_DOCUMENTATION[point],
+        (BRANCHING_POINTS_DOCUMENTATION as Record<string, any>)[point],
         `Missing documentation for branching point: ${point}`
       );
 
-      const doc = BRANCHING_POINTS_DOCUMENTATION[point];
+      const doc = (BRANCHING_POINTS_DOCUMENTATION as Record<string, any>)[point];
       assert.ok(doc.description, `Missing description for ${point}`);
       assert.ok(doc.outcomes, `Missing outcomes for ${point}`);
     });
@@ -299,8 +305,9 @@ describe('RoundStateMachine - Branching Points Documentation', () => {
 
   it('should document triggers for each branching point', () => {
     Object.entries(BRANCHING_POINTS_DOCUMENTATION).forEach(([point, doc]) => {
+      const d = doc as any;
       assert.ok(
-        doc.triggers || doc.conditions,
+        d.triggers || d.conditions,
         `${point} should have triggers or conditions documented`
       );
     });
@@ -318,7 +325,7 @@ describe('RoundStateMachine - Branching Points Documentation', () => {
     ];
 
     pointsWithRules.forEach(point => {
-      const doc = BRANCHING_POINTS_DOCUMENTATION[point];
+      const doc = (BRANCHING_POINTS_DOCUMENTATION as Record<string, any>)[point];
       assert.ok(
         doc.rules,
         `${point} should have rules documented`
@@ -343,7 +350,7 @@ describe('RoundStateMachine - Complete Round Flow', () => {
 
     // Player draws
     state.phase = result.newPhase;
-    result = machine.transition({ type: 'DRAW', player: 'east' });
+    result = machine.transition({ type: 'DRAW_TILE', player: 'east' });
     assert.equal(result.newPhase, 'playing');
 
     // Player declares tsumo
