@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リーチ麻雀 オンライン</title>
+    <meta name="description" content="サーバー権威型リーチ麻雀オンラインクライアント">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=Noto+Serif+JP:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ====== 接続画面 ====== -->
+    <div id="connect-screen" class="screen active">
+        <div class="connect-card">
+            <div class="logo">
+                <span class="logo-tile">🀄</span>
+                <div>
+                    <h1>リーチ麻雀</h1>
+                    <p class="subtitle">オンライン対戦</p>
+                </div>
+            </div>
+            <form id="connect-form">
+                <div class="form-group">
+                    <label for="server-url">サーバーURL</label>
+                    <input type="text" id="server-url" value="ws://localhost:8080" placeholder="ws://localhost:8080">
+                </div>
+                <div class="form-group">
+                    <label for="room-id">ルームID</label>
+                    <input type="text" id="room-id" value="room1" placeholder="room1" required>
+                </div>
+                <div class="form-group">
+                    <label for="player-id">プレイヤーID</label>
+                    <input type="text" id="player-id" value="player1" placeholder="player1" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg" id="connect-btn">
+                    <span class="btn-icon">🀄</span>
+                    接続する
+                </button>
+            </form>
+            <div id="connect-error" class="error-message hidden"></div>
+        </div>
+    </div>
+
+    <!-- ====== ゲーム画面 ====== -->
+    <div id="game-screen" class="screen">
+
+        <!-- ヘッダー -->
+        <header class="game-header">
+            <div class="header-left">
+                <span class="logo-small">🀄</span>
+                <span class="room-info" id="header-room-info">--</span>
+            </div>
+            <div class="header-center">
+                <div class="round-info">
+                    <span id="round-wind-display">東</span>
+                    <span id="round-number-display">1</span>局
+                    <span class="separator">·</span>
+                    <span id="honba-display">0</span>本場
+                    <span class="separator">·</span>
+                    供託 <span id="riichi-sticks-display">0</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="connection-status" id="conn-status">
+                    <span class="status-dot"></span>
+                    <span id="conn-status-text">接続中...</span>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="disconnect-btn">切断</button>
+            </div>
+        </header>
+
+        <!-- メイン卓 -->
+        <main class="game-table">
+
+            <!-- 上プレイヤー (対面) -->
+            <div class="player-area player-top" id="player-area-top">
+                <div class="player-info" id="player-info-top">
+                    <span class="player-wind" id="player-wind-top">北</span>
+                    <span class="player-name" id="player-name-top">--</span>
+                    <span class="player-score" id="player-score-top">25,000点</span>
+                    <span class="riichi-badge hidden" id="riichi-badge-top">リーチ</span>
+                </div>
+                <div class="discards discards-top" id="discards-top"></div>
+                <div class="hand-area hand-top" id="hand-top"></div>
+            </div>
+
+            <!-- 左プレイヤー -->
+            <div class="player-area player-left" id="player-area-left">
+                <div class="player-info player-info-side" id="player-info-left">
+                    <span class="player-wind" id="player-wind-left">西</span>
+                    <span class="player-name" id="player-name-left">--</span>
+                    <span class="player-score" id="player-score-left">25,000点</span>
+                    <span class="riichi-badge hidden" id="riichi-badge-left">リーチ</span>
+                </div>
+                <div class="discards discards-left" id="discards-left"></div>
+                <div class="hand-area hand-left" id="hand-left"></div>
+            </div>
+
+            <!-- 卓中央 -->
+            <div class="table-center">
+                <div class="center-content">
+                    <!-- ドラ表示 -->
+                    <div class="dora-section">
+                        <div class="dora-label">ドラ表示牌</div>
+                        <div class="dora-tiles" id="dora-indicators"></div>
+                    </div>
+
+                    <!-- 王牌 -->
+                    <div class="dead-wall-section">
+                        <div class="dora-label">王牌</div>
+                        <div class="dead-wall-tiles" id="dead-wall-tiles"></div>
+                    </div>
+
+                    <!-- フェーズ表示 -->
+                    <div class="phase-badge" id="phase-badge">待機中</div>
+
+                    <!-- 残り牌数 -->
+                    <div class="wall-count">
+                        <span class="wall-count-label">残牌</span>
+                        <span class="wall-count-value" id="wall-count">--</span>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- 右プレイヤー -->
+            <div class="player-area player-right" id="player-area-right">
+                <div class="player-info player-info-side" id="player-info-right">
+                    <span class="player-wind" id="player-wind-right">東</span>
+                    <span class="player-name" id="player-name-right">--</span>
+                    <span class="player-score" id="player-score-right">25,000点</span>
+                    <span class="riichi-badge hidden" id="riichi-badge-right">リーチ</span>
+                </div>
+                <div class="discards discards-right" id="discards-right"></div>
+                <div class="hand-area hand-right" id="hand-right"></div>
+            </div>
+
+            <!-- 自分 (下) -->
+            <div class="player-area player-bottom" id="player-area-bottom">
+                <div class="player-info" id="player-info-bottom">
+                    <span class="player-wind" id="player-wind-bottom">東</span>
+                    <span class="player-name" id="player-name-bottom">あなた</span>
+                    <span class="player-score" id="player-score-bottom">25,000点</span>
+                    <span class="riichi-badge hidden" id="riichi-badge-bottom">リーチ</span>
+                </div>
+                <div class="discards discards-bottom" id="discards-bottom"></div>
+                <div class="hand-area hand-bottom" id="hand-bottom"></div>
+            </div>
+
+        </main>
+
+        <!-- アクションパネル -->
+        <div class="action-panel" id="action-panel">
+            <div class="action-buttons" id="action-buttons">
+                <!-- ボタンはJSで動的に生成 -->
+            </div>
+
+            <!-- カスタムイベント送信 -->
+            <div class="custom-event">
+                <details>
+                    <summary>カスタムイベント送信</summary>
+                    <div class="custom-event-body">
+                        <textarea id="custom-event-json" rows="3"
+                            placeholder='例: {"type":"DISCARD","player":"east","tile":{"id":"1m-0","suit":"man","rank":1}}'></textarea>
+                        <button class="btn btn-sm btn-secondary" id="btn-send-custom">送信</button>
+                    </div>
+                </details>
+            </div>
+        </div>
+
+        <!-- イベントログ -->
+        <div class="event-log-panel">
+            <div class="event-log-header">
+                <span>イベントログ</span>
+                <button class="btn btn-ghost btn-xs" id="btn-clear-log">クリア</button>
+            </div>
+            <div class="event-log" id="event-log"></div>
+        </div>
+
+    </div>
+
+    <!-- ====== 結果モーダル ====== -->
+    <div class="modal-overlay hidden" id="result-modal">
+        <div class="modal modal-result">
+            <div class="result-icon" id="result-icon">🎉</div>
+            <h2 id="result-title">和了!</h2>
+            <div id="result-details"></div>
+            <button class="btn btn-primary" id="result-close">閉じる</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

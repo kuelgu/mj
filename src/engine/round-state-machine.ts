@@ -58,7 +58,7 @@ export class RoundStateMachine {
   constructor(
     private rules: RuleConfig,
     private state: GameState
-  ) {}
+  ) { }
 
   /**
    * Get current state
@@ -103,12 +103,22 @@ export class RoundStateMachine {
     }
   }
 
+  // ============================================================
+  // フェーズハンドラー
+  // ============================================================
+
   /**
    * Handle waiting phase
+   * ROUND_START: 山牌を生成してシャッフル → dealing へ
    */
   private handleWaiting(event: RoundEvent, events: string[]): TransitionResult {
     if (event.type === 'ROUND_START') {
       events.push('Round starting');
+
+      // 山牌を構築してシャッフル
+      this.buildAndShuffleWall();
+      events.push(`Wall built: ${this.state.wall.length} tiles`);
+
       return {
         newState: this.state,
         newPhase: 'dealing',
@@ -120,10 +130,21 @@ export class RoundStateMachine {
 
   /**
    * Handle dealing phase
+   * DEAL_COMPLETE: 各プレイヤーに13枚配牌 → playing へ
    */
   private handleDealing(event: RoundEvent, events: string[]): TransitionResult {
     if (event.type === 'DEAL_COMPLETE') {
       events.push('Dealing complete');
+
+      // 各プレイヤーに13枚配る（東→南→西→北の順に4枚×3 + 1枚）
+      this.dealTiles();
+      events.push('Tiles dealt to all players');
+
+      // 東家（dealer）から開始
+      const dealer = this.state.players.find(p => p.isDealer);
+      this.state.currentPlayer = dealer?.seat ?? 'east';
+      this.state.currentTurn = 1;
+
       return {
         newState: this.state,
         newPhase: 'playing',
@@ -142,13 +163,66 @@ export class RoundStateMachine {
    */
   private handlePlaying(event: RoundEvent, events: string[]): TransitionResult {
     switch (event.type) {
-      case 'DRAW_TILE':
-        events.push(`${event.player} drew a tile`);
-        return { newState: this.state, newPhase: 'playing', events };
+      case 'DRAW_TILE': {
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (!player) throw new Error(`Player ${event.player} not found`);
 
-      case 'DISCARD':
-        events.push(`${event.player} discarded ${event.tile.id}`);
-        // Check for nagashi mangan at end of round
+        if (this.state.wall.length === 0) {
+          // 山が尽きた → 流局
+          events.push('Wall exhausted during draw');
+          return {
+            newState: this.state,
+            newPhase: 'draw',
+            events,
+            branchingPoint: 'EXHAUSTIVE_DRAW_CHECK'
+          };
+        }
+
+        // 山の一番上から1枚ツモる
+        const drawnTile = this.state.wall.shift()!;
+        player.hand.push(drawnTile);
+        this.state.currentPlayer = event.player;
+        events.push(`${event.player} drew ${drawnTile.id} (wall: ${this.state.wall.length} left)`);
+
+        return { newState: this.state, newPhase: 'playing', events };
+      }
+
+      case 'DISCARD': {
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (!player) throw new Error(`Player ${event.player} not found`);
+
+        // 手牌から指定牌を除去
+        const tileIdx = player.hand.findIndex(t => t.id === event.tile.id);
+        if (tileIdx === -1) {
+          // IDで見つからなければスーツ・数字で照合（クライアント互換のため）
+          const fallbackIdx = player.hand.findIndex(
+            t => t.suit === event.tile.suit &&
+              t.rank === event.tile.rank &&
+              t.honorType === event.tile.honorType
+          );
+          if (fallbackIdx === -1) {
+            throw new Error(`Tile ${event.tile.id} not found in ${event.player}'s hand`);
+          }
+          const [discarded] = player.hand.splice(fallbackIdx, 1);
+          player.discards.push(discarded);
+          this.state.lastDiscard = discarded;
+          events.push(`${event.player} discarded ${discarded.id}`);
+        } else {
+          const [discarded] = player.hand.splice(tileIdx, 1);
+          player.discards.push(discarded);
+          this.state.lastDiscard = discarded;
+          events.push(`${event.player} discarded ${discarded.id}`);
+        }
+
+        this.state.currentTurn++;
+
+        // 次のプレイヤーへ（打牌後はロンの機会のためフェーズ維持）
+        // 実際はここで他プレイヤーの鳴き・ロン受付をすべきだが、
+        // 状態機械の簡略実装として次プレイヤーが自動でツモる形にする
+        const nextSeat = this.getNextSeat(event.player);
+        this.state.currentPlayer = nextSeat;
+
+        // 打牌後に山が尽きていたら流局判定
         if (this.isExhaustiveDraw()) {
           return {
             newState: this.state,
@@ -157,11 +231,12 @@ export class RoundStateMachine {
             branchingPoint: 'NAGASHI_MANGAN_CHECK'
           };
         }
+
         return { newState: this.state, newPhase: 'playing', events };
+      }
 
       case 'RON_DECLARE':
         events.push(`${event.player} declared ron`);
-        // BRANCHING POINT: Check for multiple ron
         return {
           newState: this.state,
           newPhase: 'ron_declared',
@@ -177,6 +252,27 @@ export class RoundStateMachine {
           events
         };
 
+      case 'RIICHI_DECLARE': {
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (player) {
+          player.riichi.declared = true;
+          player.riichi.turn = this.state.currentTurn;
+          player.score -= 1000;
+          this.state.riichiSticks++;
+          events.push(`${event.player} declared riichi`);
+        }
+        return { newState: this.state, newPhase: 'playing', events };
+      }
+
+      case 'EXHAUSTIVE_DRAW':
+        events.push('Exhaustive draw');
+        return {
+          newState: this.state,
+          newPhase: 'draw',
+          events,
+          branchingPoint: 'NAGASHI_MANGAN_CHECK'
+        };
+
       default:
         return { newState: this.state, newPhase: 'playing', events };
     }
@@ -184,16 +280,11 @@ export class RoundStateMachine {
 
   /**
    * Handle ron declared phase
-   * BRANCHING POINTS:
-   * - MULTIPLE_RON_CHECK: Already triggered
-   * - RIICHI_BET_DISTRIBUTION: If multiple ron
-   * - PAO_CHECK: Check if pao applies to any winner
    */
   private handleRonDeclared(event: RoundEvent, events: string[]): TransitionResult {
     if (event.type === 'MULTIPLE_RON_RESOLVED') {
       events.push(`Multiple ron resolved: ${event.winners.join(', ')}`);
 
-      // BRANCHING POINT: Distribute riichi bets for multiple ron
       const branchingPoint: BranchingPoint = event.winners.length > 1
         ? 'RIICHI_BET_DISTRIBUTION'
         : 'PAO_CHECK';
@@ -210,8 +301,6 @@ export class RoundStateMachine {
 
   /**
    * Handle tsumo declared phase
-   * BRANCHING POINTS:
-   * - PAO_CHECK: Check if pao applies
    */
   private handleTsumoDeclared(_event: RoundEvent, events: string[]): TransitionResult {
     events.push('Proceeding to scoring');
@@ -225,16 +314,12 @@ export class RoundStateMachine {
 
   /**
    * Handle draw phase
-   * BRANCHING POINTS:
-   * - NAGASHI_MANGAN_CHECK: Check for nagashi mangan
    */
   private handleDraw(_event: RoundEvent, events: string[]): TransitionResult {
-    // Check for nagashi mangan
     const nagashiPlayers = this.checkNagashiMangan();
     if (nagashiPlayers.length > 0 && this.rules.nagashiMangan.enabled) {
       events.push(`Nagashi mangan by: ${nagashiPlayers.join(', ')}`);
       if (this.rules.nagashiMangan.treatAsWin) {
-        // Treat as win - go to scoring
         return {
           newState: this.state,
           newPhase: 'scoring',
@@ -255,10 +340,6 @@ export class RoundStateMachine {
 
   /**
    * Handle scoring phase
-   * BRANCHING POINTS:
-   * - PAO_PAYMENT_CALCULATION: If pao applies
-   * - KIRIAGE_MANGAN_CHECK: Check for kiriage mangan
-   * - KAZOE_YAKUMAN_CHECK: Check for kazoe yakuman
    */
   private handleScoring(event: RoundEvent, events: string[]): TransitionResult {
     if (event.type === 'SCORING_COMPLETE') {
@@ -275,13 +356,14 @@ export class RoundStateMachine {
 
   /**
    * Handle round end phase
-   * BRANCHING POINTS:
-   * - DEALER_ROTATION: Determine if dealer continues
-   * - HONBA_UPDATE: Update honba counter
    */
   private handleRoundEnd(event: RoundEvent, events: string[]): TransitionResult {
     if (event.type === 'ROUND_END') {
       events.push('Round ended');
+
+      // プレイヤーの手牌・捨て牌をリセット
+      this.resetPlayersForNextRound();
+
       return {
         newState: this.state,
         newPhase: 'waiting',
@@ -291,52 +373,146 @@ export class RoundStateMachine {
     throw new Error(`Invalid event ${event.type} in round_end phase`);
   }
 
+  // ============================================================
+  // 牌操作ロジック
+  // ============================================================
+
   /**
-   * Check if exhaustive draw (wall exhausted)
+   * 136枚の山牌を生成してシャッフル、王牌(14枚)を分離、ドラ表示牌を設定
+   */
+  private buildAndShuffleWall(): void {
+    const tiles: TileInstance[] = [];
+    let idCounter = 0;
+
+    const suits = ['man', 'pin', 'sou'] as const;
+    for (const suit of suits) {
+      for (let rank = 1; rank <= 9; rank++) {
+        for (let copy = 0; copy < 4; copy++) {
+          const isRed = rank === 5 && copy === 0;
+          tiles.push({ id: `${rank}${suit[0]}-${idCounter++}`, suit, rank, isRed });
+        }
+      }
+    }
+
+    const honors = ['east', 'south', 'west', 'north', 'white', 'green', 'red'] as const;
+    for (const honorType of honors) {
+      for (let copy = 0; copy < 4; copy++) {
+        tiles.push({ id: `${honorType}-${idCounter++}`, suit: 'honor', honorType });
+      }
+    }
+
+    // Fisher-Yates シャッフル
+    for (let i = tiles.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+    }
+
+    // 末尾14枚を王牌に
+    this.state.deadWall = tiles.splice(tiles.length - 14, 14);
+    this.state.wall = tiles;  // 残り122枚
+
+    // ドラ表示牌: 王牌の先頭
+    this.state.doraIndicators = [this.state.deadWall[0]];
+    this.state.uraDoraIndicators = [this.state.deadWall[1]];
+  }
+
+  /**
+   * 各プレイヤーに13枚配牌する
+   * 配順: 東→南→西→北 を 4枚ずつ3回、最後に1枚ずつ
+   */
+  private dealTiles(): void {
+    // 手牌・捨て牌・副露をリセット
+    for (const player of this.state.players) {
+      player.hand = [];
+      player.discards = [];
+      player.melds = [];
+      player.riichi = { declared: false, ippatsu: false, doubleRiichi: false, turn: null };
+      player.furiten = false;
+    }
+
+    const seats: Wind[] = ['east', 'south', 'west', 'north'];
+
+    // 4枚×3ラウンド
+    for (let round = 0; round < 3; round++) {
+      for (const seat of seats) {
+        const player = this.state.players.find(p => p.seat === seat)!;
+        for (let i = 0; i < 4; i++) {
+          const tile = this.state.wall.shift();
+          if (tile) player.hand.push(tile);
+        }
+      }
+    }
+
+    // 最後に1枚ずつ（東家は2枚目も引いて14枚 → 最初にツモ済み扱い）
+    for (const seat of seats) {
+      const player = this.state.players.find(p => p.seat === seat)!;
+      const tile = this.state.wall.shift();
+      if (tile) player.hand.push(tile);
+    }
+
+    // 東家（親）はもう1枚引いて14枚（第一ツモ済み）
+    const dealer = this.state.players.find(p => p.isDealer);
+    if (dealer) {
+      const extraTile = this.state.wall.shift();
+      if (extraTile) dealer.hand.push(extraTile);
+    }
+  }
+
+  /**
+   * 次のプレイヤーの座席を返す
+   */
+  private getNextSeat(current: Wind): Wind {
+    const order: Wind[] = ['east', 'south', 'west', 'north'];
+    const idx = order.indexOf(current);
+    return order[(idx + 1) % 4];
+  }
+
+  /**
+   * 次の局に向けてプレイヤー状態をリセット
+   */
+  private resetPlayersForNextRound(): void {
+    for (const player of this.state.players) {
+      player.hand = [];
+      player.discards = [];
+      player.melds = [];
+      player.riichi = { declared: false, ippatsu: false, doubleRiichi: false, turn: null };
+      player.furiten = false;
+    }
+    this.state.wall = [];
+    this.state.deadWall = [];
+    this.state.doraIndicators = [];
+    this.state.uraDoraIndicators = [];
+    this.state.lastDiscard = null;
+    this.state.currentTurn = 0;
+  }
+
+  /**
+   * 山牌が尽きたかチェック（王牌は除く）
    */
   private isExhaustiveDraw(): boolean {
-    // 14 tiles must remain in dead wall (dora indicators + rinshan tiles)
     return this.state.wall.length === 0;
   }
 
   /**
-   * Check for nagashi mangan
-   * Returns players who achieved nagashi mangan
+   * 流し満貫チェック
    */
   private checkNagashiMangan(): Wind[] {
-    if (!this.rules.nagashiMangan.enabled) {
-      return [];
-    }
-
-    const nagashiPlayers: Wind[] = [];
-
-    for (const player of this.state.players) {
-      // Check if all discards are terminals/honors and not called by anyone
-      const isNagashi = this.isNagashiManganValid(player.discards);
-      if (isNagashi) {
-        nagashiPlayers.push(player.seat);
-      }
-    }
-
-    return nagashiPlayers;
+    if (!this.rules.nagashiMangan.enabled) return [];
+    return this.state.players
+      .filter(p => this.isNagashiManganValid(p.discards))
+      .map(p => p.seat);
   }
 
-  /**
-   * Check if discards form valid nagashi mangan
-   */
   private isNagashiManganValid(discards: TileInstance[]): boolean {
-    // All discards must be terminals or honors
-    return discards.every(tile => {
+    return discards.length > 0 && discards.every(tile => {
       if (tile.suit === 'honor') return true;
       return tile.rank === 1 || tile.rank === 9;
     });
-    // Note: In real implementation, also need to check that none were called
   }
 }
 
 /**
  * Branching point documentation
- * This serves as the "map" of all decision points in the state machine
  */
 export const BRANCHING_POINTS_DOCUMENTATION = {
   MULTIPLE_RON_CHECK: {
@@ -349,7 +525,6 @@ export const BRANCHING_POINTS_DOCUMENTATION = {
       'Triple ron - proceed to RIICHI_BET_DISTRIBUTION or abort if not allowed'
     ]
   },
-
   RIICHI_BET_DISTRIBUTION: {
     description: 'Distribute riichi bets on table when multiple players win',
     triggers: ['Multiple ron resolved'],
@@ -360,100 +535,55 @@ export const BRANCHING_POINTS_DOCUMENTATION = {
       'to_next_dealer: All go to next dealer'
     ]
   },
-
   PAO_CHECK: {
     description: 'Check if pao (responsibility payment) applies to the winning hand',
     triggers: ['Winning hand contains specific yakuman'],
     rules: ['pao.enabled', 'pao.applyTo'],
-    outcomes: [
-      'No pao: Normal payment calculation',
-      'Pao applies: Proceed to PAO_PAYMENT_CALCULATION'
-    ]
+    outcomes: ['No pao: Normal payment calculation', 'Pao applies: Proceed to PAO_PAYMENT_CALCULATION']
   },
-
   PAO_PAYMENT_CALCULATION: {
     description: 'Calculate payment when pao applies',
     triggers: ['Pao check passed'],
     rules: ['pao.paymentStyle'],
-    outcomes: [
-      'full: Pao player pays full amount',
-      'split: Pao player splits with discarder',
-      'configurable_full_or_split: Depends on specific yakuman'
-    ]
+    outcomes: ['full: Pao player pays full amount', 'split: Pao player splits with discarder']
   },
-
   KIRIAGE_MANGAN_CHECK: {
-    description: 'Check if hand qualifies for kiriage mangan (round up to mangan)',
+    description: 'Check if hand qualifies for kiriage mangan',
     triggers: ['Scoring calculation'],
     rules: ['scoring.kiriageMangan'],
-    outcomes: [
-      '4 han 30 fu → mangan (if enabled)',
-      '3 han 60 fu → mangan (if enabled)',
-      'Otherwise: Use normal score table'
-    ]
+    outcomes: ['4 han 30 fu → mangan', '3 han 60 fu → mangan', 'Otherwise: normal']
   },
-
   KAZOE_YAKUMAN_CHECK: {
     description: 'Check if 13+ han counts as yakuman',
     triggers: ['Scoring calculation with 13+ han'],
     rules: ['scoring.kazoeYakuman'],
-    outcomes: [
-      'yakuman: Treat as yakuman',
-      'limit: Treat as sanbaiman',
-      'unlimited: Count actual han value'
-    ]
+    outcomes: ['yakuman', 'limit: sanbaiman', 'unlimited']
   },
-
   NAGASHI_MANGAN_CHECK: {
     description: 'Check if any player achieved nagashi mangan at exhaustive draw',
     triggers: ['Exhaustive draw'],
     rules: ['nagashiMangan.enabled', 'nagashiMangan.treatAsWin'],
-    outcomes: [
-      'Not enabled: Normal draw',
-      'Enabled + treatAsWin=true: Score as win, end round',
-      'Enabled + treatAsWin=false: Score as draw'
-    ]
+    outcomes: ['Not enabled: Normal draw', 'Enabled + treatAsWin=true: Score as win']
   },
-
   EXHAUSTIVE_DRAW_CHECK: {
     description: 'Check if round ends in exhaustive draw (wall exhausted)',
-    triggers: ['Wall empty (14 tiles remain in dead wall)'],
-    outcomes: [
-      'Proceed to NAGASHI_MANGAN_CHECK',
-      'Then to draw or win scoring'
-    ]
+    triggers: ['Wall empty'],
+    outcomes: ['Proceed to NAGASHI_MANGAN_CHECK']
   },
-
   ABORTIVE_DRAW_CHECK: {
     description: 'Check for abortive draw conditions during play',
     triggers: ['Special conditions during play'],
-    conditions: [
-      'Four identical wind discards (四風連打)',
-      'Four riichi declarations (四家立直)',
-      'Four kans by different players (四槓散了)',
-      'Nine different terminals/honors in starting hand (九種九牌)'
-    ],
-    outcomes: [
-      'Abortive draw: End round immediately',
-      'Continue play'
-    ]
+    conditions: ['四風連打', '四家立直', '四槓散了', '九種九牌'],
+    outcomes: ['Abortive draw', 'Continue play']
   },
-
   HONBA_UPDATE: {
-    description: 'Update honba (repeat) counter after round ends',
+    description: 'Update honba counter after round ends',
     triggers: ['Round end'],
-    outcomes: [
-      'Dealer wins or draw: Increment honba',
-      'Non-dealer wins: Reset honba to 0'
-    ]
+    outcomes: ['Dealer wins or draw: Increment honba', 'Non-dealer wins: Reset honba']
   },
-
   DEALER_ROTATION: {
     description: 'Determine if dealer seat rotates',
     triggers: ['Round end'],
-    outcomes: [
-      'Dealer wins or tenpai at draw: Dealer continues',
-      'Non-dealer wins or dealer not tenpai: Rotate dealer'
-    ]
+    outcomes: ['Dealer wins or tenpai at draw: Dealer continues', 'Non-dealer wins: Rotate']
   }
 };
