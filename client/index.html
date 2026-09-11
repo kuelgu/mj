@@ -4,198 +4,356 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>リーチ麻雀 オンライン</title>
-    <meta name="description" content="サーバー権威型リーチ麻雀オンラインクライアント">
+    <title>オンライン麻雀</title>
+    <meta name="description" content="美麗なUIを備えた本格リーチ麻雀オンラインクライアント">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=Noto+Serif+JP:wght@400;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=Noto+Serif+JP:wght@400;700;900&family=Share+Tech+Mono&family=Orbitron:wght@600;800&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <!-- ====== 接続画面 ====== -->
+    <!-- ====== 接続画面 (ロビー) ====== -->
     <div id="connect-screen" class="screen active">
-        <div class="connect-card">
-            <div class="logo">
-                <span class="logo-tile">🀄</span>
-                <div>
-                    <h1>リーチ麻雀</h1>
-                    <p class="subtitle">オンライン対戦</p>
+        <div class="tenhou-lobby-card">
+            <div class="lobby-header">
+                <div class="tenhou-symbol">🀄</div>
+                <div class="lobby-title-area">
+                    <div class="lobby-badge">ONLINE MAHJONG</div>
+                    <h1 class="lobby-title">オンライン麻雀</h1>
+                    <p class="lobby-sub">本格4人麻雀クライアント</p>
                 </div>
             </div>
-            <form id="connect-form">
-                <div class="form-group">
-                    <label for="server-url">サーバーURL</label>
-                    <input type="text" id="server-url" value="ws://localhost:8080" placeholder="ws://localhost:8080">
+
+            <form id="connect-form" class="lobby-form">
+                <div class="lobby-group">
+                    <label for="server-url">対局サーバーURL</label>
+                    <input type="text" id="server-url" value="ws://localhost:8080" placeholder="ws://localhost:8080" required>
                 </div>
-                <div class="form-group">
-                    <label for="room-id">ルームID</label>
-                    <input type="text" id="room-id" value="room1" placeholder="room1" required>
+                <div class="lobby-row">
+                    <div class="lobby-group">
+                        <label for="room-id">対局卓 (ルームID)</label>
+                        <input type="text" id="room-id" value="room1" placeholder="room1" required>
+                    </div>
+                    <div class="lobby-group">
+                        <label for="player-id">プレイヤー名</label>
+                        <input type="text" id="player-id" value="player1" placeholder="player1" required>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="player-id">プレイヤーID</label>
-                    <input type="text" id="player-id" value="player1" placeholder="player1" required>
+
+                <div class="lobby-settings-preview">
+                    <span class="pill">東南戦</span>
+                    <span class="pill">喰い断あり</span>
+                    <span class="pill">赤ドラあり</span>
+                    <span class="pill">25,000点持ち</span>
                 </div>
-                <button type="submit" class="btn btn-primary btn-lg" id="connect-btn">
-                    <span class="btn-icon">🀄</span>
-                    接続する
+
+                <button type="submit" class="btn-tenhou-play" id="connect-btn">
+                    <span class="play-text">対局室へ入室</span>
                 </button>
             </form>
+
             <div id="connect-error" class="error-message hidden"></div>
+
+            <div class="lobby-footer">
+                <span>Online Mahjong Engine v2.0</span>
+            </div>
         </div>
     </div>
 
-    <!-- ====== ゲーム画面 ====== -->
+    <!-- ====== ゲーム画面 (対局卓) ====== -->
     <div id="game-screen" class="screen">
 
-        <!-- ヘッダー -->
-        <header class="game-header">
-            <div class="header-left">
-                <span class="logo-small">🀄</span>
-                <span class="room-info" id="header-room-info">--</span>
+        <!-- 対局ヘッダー -->
+        <header class="tenhou-header">
+            <div class="th-header-left">
+                <span class="th-logo">🀄</span>
+                <span class="th-brand">麻雀</span>
+                <span class="th-room-tag" id="header-room-info">卓: -- / --</span>
             </div>
-            <div class="header-center">
-                <div class="round-info">
-                    <span id="round-wind-display">東</span>
-                    <span id="round-number-display">1</span>局
-                    <span class="separator">·</span>
-                    <span id="honba-display">0</span>本場
-                    <span class="separator">·</span>
-                    供託 <span id="riichi-sticks-display">0</span>
+
+
+            <div class="th-header-center">
+                <div class="th-round-summary" id="header-round-summary">
+                    <span class="th-round-title" id="round-title-display">東 1 局</span>
+                    <span class="th-honba-title" id="honba-title-display">0 本場</span>
+                    <span class="th-dot">・</span>
+                    <span class="th-pot-title">供託: <strong id="riichi-sticks-display">0</strong></span>
                 </div>
             </div>
-            <div class="header-right">
-                <div class="connection-status" id="conn-status">
+
+            <div class="th-header-right">
+                <div class="connection-pill" id="conn-status">
                     <span class="status-dot"></span>
-                    <span id="conn-status-text">接続中...</span>
+                    <span id="conn-status-text">接続中</span>
                 </div>
-                <button class="btn btn-ghost btn-sm" id="disconnect-btn">切断</button>
+                <button class="th-btn-ghost" id="toggle-log-btn" title="ログ表示切替">ログ</button>
+                <button class="th-btn-ghost danger" id="disconnect-btn" title="切断">退席</button>
             </div>
         </header>
 
-        <!-- メイン卓 -->
-        <main class="game-table">
+        <!-- メイン対局卓コンテナ (スクエア卓) -->
+        <div class="tenhou-table-wrapper">
+            <main class="tenhou-table" id="tenhou-table">
 
-            <!-- 上プレイヤー (対面) -->
-            <div class="player-area player-top" id="player-area-top">
-                <div class="player-info" id="player-info-top">
-                    <span class="player-wind" id="player-wind-top">北</span>
-                    <span class="player-name" id="player-name-top">--</span>
-                    <span class="player-score" id="player-score-top">25,000点</span>
-                    <span class="riichi-badge hidden" id="riichi-badge-top">リーチ</span>
+                <!-- 卓布テクスチャ・枠線レイヤー -->
+                <div class="table-felt-overlay"></div>
+
+                <!-- ==============================
+                     対面 (TOP) エリア
+                     ============================== -->
+                <div class="player-zone zone-top" id="player-area-top">
+                    <!-- 手牌 + ツモ牌 -->
+                    <div class="hand-row">
+                        <div class="hand-tiles" id="hand-top"></div>
+                        <div class="drawn-slot" id="drawn-top"></div>
+                    </div>
+                    <!-- 副露 (鳴き牌) -->
+                    <div class="melds-container" id="melds-top"></div>
                 </div>
-                <div class="discards discards-top" id="discards-top"></div>
-                <div class="hand-area hand-top" id="hand-top"></div>
-            </div>
 
-            <!-- 左プレイヤー -->
-            <div class="player-area player-left" id="player-area-left">
-                <div class="player-info player-info-side" id="player-info-left">
-                    <span class="player-wind" id="player-wind-left">西</span>
-                    <span class="player-name" id="player-name-left">--</span>
-                    <span class="player-score" id="player-score-left">25,000点</span>
-                    <span class="riichi-badge hidden" id="riichi-badge-left">リーチ</span>
+                <!-- ==============================
+                     上家 (LEFT) エリア
+                     ============================== -->
+                <div class="player-zone zone-left" id="player-area-left">
+                    <div class="hand-row vertical">
+                        <div class="hand-tiles" id="hand-left"></div>
+                        <div class="drawn-slot" id="drawn-left"></div>
+                    </div>
+                    <div class="melds-container vertical" id="melds-left"></div>
                 </div>
-                <div class="discards discards-left" id="discards-left"></div>
-                <div class="hand-area hand-left" id="hand-left"></div>
-            </div>
 
-            <!-- 卓中央 -->
-            <div class="table-center">
-                <div class="center-content">
-                    <!-- ドラ表示 -->
-                    <div class="dora-section">
-                        <div class="dora-label">ドラ表示牌</div>
-                        <div class="dora-tiles" id="dora-indicators"></div>
+                <!-- ==============================
+                     下家 (RIGHT) エリア
+                     ============================== -->
+                <div class="player-zone zone-right" id="player-area-right">
+                    <div class="hand-row vertical">
+                        <div class="drawn-slot" id="drawn-right"></div>
+                        <div class="hand-tiles" id="hand-right"></div>
+                    </div>
+                    <div class="melds-container vertical" id="melds-right"></div>
+                </div>
+
+                <!-- ==============================
+                     中央領域: 河 (捨牌) & サイコロボックス (卓心)
+                     ============================== -->
+                <div class="table-center-core">
+
+                    <!-- 対面の河 (6枚×3段) -->
+                    <div class="kawa kawa-top" id="kawa-top">
+                        <div class="kawa-grid" id="discards-top"></div>
                     </div>
 
-                    <!-- 王牌 -->
-                    <div class="dead-wall-section">
-                        <div class="dora-label">王牌</div>
-                        <div class="dead-wall-tiles" id="dead-wall-tiles"></div>
+                    <!-- 上家の河 (6枚×3段) -->
+                    <div class="kawa kawa-left" id="kawa-left">
+                        <div class="kawa-grid" id="discards-left"></div>
                     </div>
 
-                    <!-- フェーズ表示 -->
-                    <div class="phase-badge" id="phase-badge">待機中</div>
+                    <!-- 中央コンソール (サイコロボックス / 卓心) -->
+                    <div class="tenhou-center-box" id="center-box">
+                        
+                        <!-- 上辺: 対面情報 & リーチ棒 -->
+                        <div class="cbox-edge edge-top" id="cbox-edge-top">
+                            <div class="cbox-riichi-slot" id="riichi-slot-top"></div>
+                            <div class="cbox-player-info">
+                                <span class="cbox-wind" id="player-wind-top">北</span>
+                                <span class="cbox-name" id="player-name-top">--</span>
+                                <span class="cbox-score" id="player-score-top">25000</span>
+                            </div>
+                        </div>
 
-                    <!-- 残り牌数 -->
-                    <div class="wall-count">
-                        <span class="wall-count-label">残牌</span>
-                        <span class="wall-count-value" id="wall-count">--</span>
+                        <!-- 左辺: 上家情報 & リーチ棒 -->
+                        <div class="cbox-edge edge-left" id="cbox-edge-left">
+                            <div class="cbox-riichi-slot" id="riichi-slot-left"></div>
+                            <div class="cbox-player-info">
+                                <span class="cbox-wind" id="player-wind-left">西</span>
+                                <span class="cbox-name" id="player-name-left">--</span>
+                                <span class="cbox-score" id="player-score-left">25000</span>
+                            </div>
+                        </div>
+
+                        <!-- 右辺: 下家情報 & リーチ棒 -->
+                        <div class="cbox-edge edge-right" id="cbox-edge-right">
+                            <div class="cbox-riichi-slot" id="riichi-slot-right"></div>
+                            <div class="cbox-player-info">
+                                <span class="cbox-wind" id="player-wind-right">南</span>
+                                <span class="cbox-name" id="player-name-right">--</span>
+                                <span class="cbox-score" id="player-score-right">25000</span>
+                            </div>
+                        </div>
+
+                        <!-- 下辺: 自家情報 & リーチ棒 -->
+                        <div class="cbox-edge edge-bottom" id="cbox-edge-bottom">
+                            <div class="cbox-riichi-slot" id="riichi-slot-bottom"></div>
+                            <div class="cbox-player-info">
+                                <span class="cbox-wind" id="player-wind-bottom">東</span>
+                                <span class="cbox-name" id="player-name-bottom">あなた</span>
+                                <span class="cbox-score" id="player-score-bottom">25000</span>
+                            </div>
+                        </div>
+
+                        <!-- コンソール中央部 (局数、ドラ、残り牌数) -->
+                        <div class="cbox-inner">
+                            <div class="cbox-round-line">
+                                <span id="round-wind-display">東</span>
+                                <span id="round-number-display">1</span>局
+                                <span class="cbox-sub" id="honba-display">0</span>本場
+                            </div>
+
+                            <!-- ドラ表示牌 -->
+                            <div class="cbox-dora-section">
+                                <div class="cbox-dora-label">ドラ表示</div>
+                                <div class="cbox-dora-tiles" id="dora-indicators"></div>
+                            </div>
+
+                            <!-- 残り牌数 & フェーズ -->
+                            <div class="cbox-status-line">
+                                <div class="cbox-wall">
+                                    <span class="wall-lbl">残</span>
+                                    <span class="wall-val" id="wall-count">70</span>
+                                </div>
+                                <div class="phase-badge" id="phase-badge">待機中</div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- 下家の河 (6枚×3段) -->
+                    <div class="kawa kawa-right" id="kawa-right">
+                        <div class="kawa-grid" id="discards-right"></div>
+                    </div>
+
+                    <!-- 自家の河 (6枚×3段) -->
+                    <div class="kawa kawa-bottom" id="kawa-bottom">
+                        <div class="kawa-grid" id="discards-bottom"></div>
+                    </div>
+
+                </div>
+
+                <!-- ==============================
+                     自家 (BOTTOM / あなた) エリア
+                     ============================== -->
+                <div class="player-zone zone-bottom" id="player-area-bottom">
+                    <div class="hand-row hand-bottom-wrapper">
+                        <!-- 純手牌 (最大13枚) -->
+                        <div class="hand-tiles my-hand-tiles" id="hand-bottom"></div>
+                        <!-- ツモ牌隙間とツモ牌スロット -->
+                        <div class="drawn-slot my-drawn-slot" id="drawn-bottom"></div>
+                        <!-- 自家の副露 (右端) -->
+                        <div class="melds-container my-melds-container" id="melds-bottom"></div>
                     </div>
                 </div>
 
-            </div>
-
-            <!-- 右プレイヤー -->
-            <div class="player-area player-right" id="player-area-right">
-                <div class="player-info player-info-side" id="player-info-right">
-                    <span class="player-wind" id="player-wind-right">東</span>
-                    <span class="player-name" id="player-name-right">--</span>
-                    <span class="player-score" id="player-score-right">25,000点</span>
-                    <span class="riichi-badge hidden" id="riichi-badge-right">リーチ</span>
-                </div>
-                <div class="discards discards-right" id="discards-right"></div>
-                <div class="hand-area hand-right" id="hand-right"></div>
-            </div>
-
-            <!-- 自分 (下) -->
-            <div class="player-area player-bottom" id="player-area-bottom">
-                <div class="player-info" id="player-info-bottom">
-                    <span class="player-wind" id="player-wind-bottom">東</span>
-                    <span class="player-name" id="player-name-bottom">あなた</span>
-                    <span class="player-score" id="player-score-bottom">25,000点</span>
-                    <span class="riichi-badge hidden" id="riichi-badge-bottom">リーチ</span>
-                </div>
-                <div class="discards discards-bottom" id="discards-bottom"></div>
-                <div class="hand-area hand-bottom" id="hand-bottom"></div>
-            </div>
-
-        </main>
-
-        <!-- アクションパネル -->
-        <div class="action-panel" id="action-panel">
-            <div class="action-buttons" id="action-buttons">
-                <!-- ボタンはJSで動的に生成 -->
-            </div>
-
-            <!-- カスタムイベント送信 -->
-            <div class="custom-event">
-                <details>
-                    <summary>カスタムイベント送信</summary>
-                    <div class="custom-event-body">
-                        <textarea id="custom-event-json" rows="3"
-                            placeholder='例: {"type":"DISCARD","player":"east","tile":{"id":"1m-0","suit":"man","rank":1}}'></textarea>
-                        <button class="btn btn-sm btn-secondary" id="btn-send-custom">送信</button>
-                    </div>
-                </details>
-            </div>
+            </main>
         </div>
 
-        <!-- イベントログ -->
-        <div class="event-log-panel">
-            <div class="event-log-header">
-                <span>イベントログ</span>
-                <button class="btn btn-ghost btn-xs" id="btn-clear-log">クリア</button>
+        <!-- ====== プレイヤートグルバー & アクションコンソール ====== -->
+        <footer class="tenhou-bottom-bar">
+            
+            <!-- 対局便利トグル (自動和了・鳴きなし・ツモ切り・理牌) -->
+            <div class="tenhou-toggles">
+                <label class="th-toggle-item" title="アガれる時は自動でツモ/ロンします">
+                    <input type="checkbox" id="toggle-auto-win" checked>
+                    <span class="th-checkbox-custom"></span>
+                    <span class="toggle-text">自動和了</span>
+                </label>
+                <label class="th-toggle-item" title="ポン・チー・カンを自動でパスします">
+                    <input type="checkbox" id="toggle-no-meld">
+                    <span class="th-checkbox-custom"></span>
+                    <span class="toggle-text">鳴きなし</span>
+                </label>
+                <label class="th-toggle-item" title="ツモった牌を即座に自動で打牌します">
+                    <input type="checkbox" id="toggle-auto-tsumogiri">
+                    <span class="th-checkbox-custom"></span>
+                    <span class="toggle-text">ツモ切り</span>
+                </label>
+                <label class="th-toggle-item" title="手牌を自動でソートします">
+                    <input type="checkbox" id="toggle-auto-sort" checked>
+                    <span class="th-checkbox-custom"></span>
+                    <span class="toggle-text">理牌</span>
+                </label>
+            </div>
+
+            <!-- アクションボタン群 (ツモ、ロン、立直、ポン、チー、カン、パス等) -->
+            <div class="tenhou-action-panel" id="action-panel">
+                <div class="action-buttons" id="action-buttons">
+                    <!-- JSで動的にボタン生成 -->
+                </div>
+            </div>
+
+        </footer>
+
+        <!-- 折りたたみイベントログパネル -->
+        <div class="event-log-drawer hidden" id="log-drawer">
+            <div class="log-drawer-header">
+                <span>対局イベントログ</span>
+                <div class="drawer-controls">
+                    <button class="th-btn-xs" id="btn-clear-log">消去</button>
+                    <button class="th-btn-xs" id="btn-close-log">✕</button>
+                </div>
             </div>
             <div class="event-log" id="event-log"></div>
+            <!-- カスタムイベント送信 (デバッグ用) -->
+            <div class="log-custom-input">
+                <input type="text" id="custom-event-json" placeholder='{"type":"DISCARD","player":"east",...}'>
+                <button class="th-btn-xs" id="btn-send-custom">送信</button>
+            </div>
         </div>
 
     </div>
 
-    <!-- ====== 結果モーダル ====== -->
+    <!-- ====== 和了・精算リザルトモーダル ====== -->
     <div class="modal-overlay hidden" id="result-modal">
-        <div class="modal modal-result">
-            <div class="result-icon" id="result-icon">🎉</div>
-            <h2 id="result-title">和了!</h2>
-            <div id="result-details"></div>
-            <button class="btn btn-primary" id="result-close">閉じる</button>
+        <div class="tenhou-result-card">
+
+            <div class="result-head">
+                <span class="result-badge" id="result-badge">和了</span>
+                <h2 id="result-winner-title">東家 和了</h2>
+                <div class="result-type-tag" id="result-type-tag">ツモ</div>
+            </div>
+
+            <!-- 和了手牌の公開表示 -->
+            <div class="result-hand-section">
+                <div class="result-hand-label">和了手牌</div>
+                <div class="result-hand-tiles" id="result-hand-tiles"></div>
+            </div>
+
+            <!-- ドラ・裏ドラ -->
+            <div class="result-dora-section">
+                <div class="result-dora-group">
+                    <span class="dora-lbl">ドラ表示牌:</span>
+                    <div class="dora-inline-tiles" id="result-dora-indicators"></div>
+                </div>
+                <div class="result-dora-group" id="result-uradora-group">
+                    <span class="dora-lbl">裏ドラ表示牌:</span>
+                    <div class="dora-inline-tiles" id="result-uradora-indicators"></div>
+                </div>
+            </div>
+
+            <!-- 役一覧 & 飜数/符数/点数 -->
+            <div class="result-yaku-container">
+                <div class="yaku-list" id="result-yaku-list">
+                    <!-- 動的挿入 -->
+                </div>
+                <div class="result-total-box">
+                    <div class="result-fu-han" id="result-fu-han">30符 4飜</div>
+                    <div class="result-point-title" id="result-point-title">満貫</div>
+                    <div class="result-points" id="result-points">8000点</div>
+                    <div class="result-payment-split" id="result-payment-split">(2000・4000)</div>
+                </div>
+            </div>
+
+            <div class="result-footer-actions">
+                <button class="btn-tenhou-modal-ok" id="result-close">次へ</button>
+            </div>
         </div>
     </div>
 
+    <!-- スクリプト読み込み -->
+    <script src="tiles.js"></script>
     <script src="app.js"></script>
 </body>
 

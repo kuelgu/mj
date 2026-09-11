@@ -1,59 +1,78 @@
 /* ============================================================
-   リーチ麻雀 クライアント スタイルシート
-   深緑麻雀卓テーマ / プレミアムダークUI
+   オンライン麻雀 クライアント スタイルシート
+   高精細ベクター牌 / スクエア卓 / 卓心コンソール / 6x3河
    ============================================================ */
 
-/* ---- Google Fonts フォールバック ---- */
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=Noto+Serif+JP:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=Noto+Serif+JP:wght@400;700;900&family=Share+Tech+Mono&family=Orbitron:wght@600;800&display=swap');
 
-/* ---- CSS変数 ---- */
+/* ---- CSS変数 (カラーパレット) ---- */
 :root {
-    --table-green: #1a3a1a;
-    --table-green-l: #244d24;
-    --table-felt: #0f2a0f;
-    --accent-gold: #c8a84b;
-    --accent-gold-l: #e8c870;
-    --accent-red: #cc3333;
-    --accent-blue: #2a6cb5;
-    --bg-dark: #0a1a0a;
-    --bg-panel: rgba(0, 0, 0, 0.6);
-    --bg-card: rgba(255, 255, 255, 0.04);
-    --text-primary: #f0e8d0;
-    --text-muted: #a08860;
-    --border: rgba(200, 168, 75, 0.2);
-    --border-bright: rgba(200, 168, 75, 0.5);
-    --tile-bg: #fdf6e3;
-    --tile-shadow: rgba(0, 0, 0, 0.6);
-    --tile-border: #d4a843;
-    --radius: 8px;
-    --radius-sm: 4px;
-    --shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+    /* 卓面・フレーム */
+    --th-felt-dark: #123820;
+    --th-felt-main: #184428;
+    --th-felt-light: #1f5533;
+    --th-felt-line: rgba(255, 255, 255, 0.08);
+    --th-frame-dark: #111315;
+    --th-frame-wood: #221815;
+    --th-frame-border: #3d2b24;
+
+    /* 中央コンソール (サイコロボックス) */
+    --cbox-bg: #181b1e;
+    --cbox-border: #2f353d;
+    --cbox-inner-bg: #101215;
+    --cbox-gold: #f5c542;
+    --cbox-blue: #38bdf8;
+    --cbox-active: #ff9900;
+    --cbox-active-glow: rgba(255, 153, 0, 0.6);
+
+    /* 牌カラー */
+    --tile-white-front: #faf7f0;
+    --tile-white-grad: linear-gradient(180deg, #ffffff 0%, #f4eee2 100%);
+    --tile-border: #cfc4b0;
+    --tile-shadow: rgba(0, 0, 0, 0.45);
+    
+    /* 伝統的黄色竹背 (イエローキャラメル) */
+    --tile-bamboo-bg: linear-gradient(180deg, #e5a528 0%, #cc8a16 50%, #b2730a 100%);
+    --tile-bamboo-border: #8c5804;
+
+    /* テキスト & UI */
+    --text-main: #f3f4f6;
+    --text-sub: #9ca3af;
+    --text-muted: #6b7280;
+    --accent-red: #ef4444;
+    --accent-gold: #fbbf24;
+    --accent-green: #22c55e;
+    --accent-blue: #3b82f6;
+
+    /* 共通サイズ */
+    --radius-sm: 3px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
 }
 
-*,
-*::before,
-*::after {
+*, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-html,
-body {
+html, body {
+    width: 100%;
     height: 100%;
-    font-family: 'Noto Sans JP', sans-serif;
-    background: var(--bg-dark);
-    color: var(--text-primary);
     overflow: hidden;
+    background-color: var(--th-frame-dark);
+    font-family: 'Noto Sans JP', sans-serif;
+    color: var(--text-main);
 }
 
 /* ============================================================
    スクリーン管理
    ============================================================ */
-
 .screen {
     display: none;
-    width: 100%;
+    width: 100vw;
     height: 100vh;
 }
 
@@ -62,153 +81,255 @@ body {
 }
 
 /* ============================================================
-   接続画面
+   接続画面 (ロビー)
    ============================================================ */
-
 #connect-screen {
     align-items: center;
     justify-content: center;
-    background: radial-gradient(ellipse at center, #1a3a1a 0%, #051005 100%);
+    background: radial-gradient(circle at center, #1b2820 0%, #0c120e 100%);
+    position: relative;
 }
 
-.connect-card {
-    background: rgba(0, 0, 0, 0.7);
-    border: 1px solid var(--border-bright);
-    border-radius: 16px;
-    padding: 3rem 2.5rem;
-    width: min(420px, 95vw);
-    box-shadow: var(--shadow), 0 0 60px rgba(200, 168, 75, 0.08);
-    backdrop-filter: blur(20px);
+#connect-screen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: 
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
 }
 
-.logo {
+.tenhou-lobby-card {
+    position: relative;
+    z-index: 1;
+    width: min(440px, 92vw);
+    background: rgba(18, 22, 26, 0.92);
+    border: 1px solid rgba(245, 197, 66, 0.25);
+    border-radius: 12px;
+    padding: 2.2rem 2rem 1.8rem;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 40px rgba(245, 197, 66, 0.08);
+    backdrop-filter: blur(16px);
+}
+
+.lobby-header {
     display: flex;
     align-items: center;
     gap: 1rem;
-    margin-bottom: 2.5rem;
-    justify-content: center;
+    margin-bottom: 1.8rem;
 }
 
-.logo-tile {
-    font-size: 3rem;
-    filter: drop-shadow(0 0 12px rgba(200, 168, 75, 0.4));
+.tenhou-symbol {
+    font-size: 2.8rem;
+    line-height: 1;
+    filter: drop-shadow(0 0 10px rgba(245, 197, 66, 0.5));
 }
 
-.logo h1 {
-    font-family: 'Noto Serif JP', serif;
-    font-size: 1.7rem;
+.lobby-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
     color: var(--accent-gold);
-    letter-spacing: 0.1em;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 800;
 }
 
-.subtitle {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    margin-top: 2px;
+.lobby-title {
+    font-family: 'Noto Serif JP', serif;
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #ffffff;
+    letter-spacing: 0.08em;
+    margin-top: 1px;
 }
 
-.form-group {
-    margin-bottom: 1.25rem;
+.lobby-sub {
+    font-size: 0.78rem;
+    color: var(--text-sub);
 }
 
-.form-group label {
+.lobby-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.lobby-row {
+    display: flex;
+    gap: 0.8rem;
+}
+
+.lobby-row .lobby-group {
+    flex: 1;
+}
+
+.lobby-group label {
     display: block;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    margin-bottom: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-sub);
+    margin-bottom: 0.35rem;
     letter-spacing: 0.05em;
 }
 
-.form-group input {
+.lobby-group input {
     width: 100%;
-    padding: 0.7rem 1rem;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--border);
+    padding: 0.65rem 0.85rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    color: #fff;
     font-family: inherit;
-    font-size: 0.95rem;
-    transition: border-color 0.2s;
+    font-size: 0.9rem;
+    transition: all 0.2s;
 }
 
-.form-group input:focus {
+.lobby-group input:focus {
     outline: none;
     border-color: var(--accent-gold);
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 12px rgba(245, 197, 66, 0.25);
 }
 
-.error-message {
-    margin-top: 1rem;
-    padding: 0.7rem 1rem;
-    background: rgba(204, 51, 51, 0.2);
-    border: 1px solid rgba(204, 51, 51, 0.4);
+.lobby-settings-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.6rem 0;
+}
+
+.lobby-settings-preview .pill {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    color: var(--text-sub);
+}
+
+.btn-tenhou-play {
+    margin-top: 0.5rem;
+    padding: 0.85rem 1.5rem;
+    background: linear-gradient(180deg, #d49a1d 0%, #b87b0a 100%);
+    border: 1px solid #f5c542;
     border-radius: var(--radius-sm);
-    color: #f87171;
-    font-size: 0.85rem;
+    color: #111;
+    font-weight: 800;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(184, 123, 10, 0.4);
+    transition: all 0.2s;
 }
 
-.hidden {
-    display: none !important;
+.btn-tenhou-play:hover {
+    background: linear-gradient(180deg, #f5c542 0%, #d49a1d 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(245, 197, 66, 0.5);
+}
+
+.lobby-footer {
+    margin-top: 1.5rem;
+    text-align: center;
+    font-size: 0.7rem;
+    color: var(--text-muted);
 }
 
 /* ============================================================
-   ゲーム画面レイアウト
+   ゲーム画面 (UIメイン)
    ============================================================ */
-
 #game-screen {
     flex-direction: column;
-    background: radial-gradient(ellipse at 50% 40%, var(--table-green) 0%, var(--bg-dark) 70%);
+    background: var(--th-frame-dark);
 }
 
-/* ---- ヘッダー ---- */
-.game-header {
+/* ---- 対局ヘッダー ---- */
+.tenhou-header {
+    height: 42px;
+    background: #14171a;
+    border-bottom: 1px solid #282e36;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.6rem 1.2rem;
-    background: rgba(0, 0, 0, 0.7);
-    border-bottom: 1px solid var(--border);
+    padding: 0 1rem;
     flex-shrink: 0;
-    height: 48px;
+    z-index: 100;
 }
 
-.header-left {
+.th-header-left {
     display: flex;
     align-items: center;
     gap: 0.6rem;
 }
 
-.logo-small {
-    font-size: 1.4rem;
+.th-logo {
+    font-size: 1.3rem;
 }
 
-.room-info {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-}
-
-.header-center .round-info {
-    font-size: 0.9rem;
+.th-brand {
+    font-family: 'Noto Serif JP', serif;
+    font-weight: 900;
+    font-size: 1.05rem;
     color: var(--accent-gold);
+    letter-spacing: 0.1em;
+}
+
+.th-room-tag {
+    font-size: 0.78rem;
+    color: var(--text-sub);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    margin-left: 4px;
+}
+
+.th-header-center .th-round-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.88rem;
     letter-spacing: 0.05em;
 }
 
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 0.8rem;
+.th-round-title {
+    font-family: 'Noto Serif JP', serif;
+    font-weight: 700;
+    color: #fff;
 }
 
-.connection-status {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.8rem;
+.th-honba-title {
+    color: var(--text-sub);
+}
+
+.th-dot {
     color: var(--text-muted);
 }
 
+.th-pot-title strong {
+    color: var(--accent-gold);
+    font-family: 'Share Tech Mono', monospace;
+}
+
+.th-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.connection-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-sub);
+    background: rgba(0, 0, 0, 0.4);
+    padding: 3px 8px;
+    border-radius: 12px;
+}
+
 .status-dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: #666;
 }
@@ -220,725 +341,1210 @@ body {
 
 .status-dot.connecting {
     background: #f59e0b;
-    animation: blink 1s infinite;
 }
 
 .status-dot.disconnected {
     background: #ef4444;
 }
 
-@keyframes blink {
-
-    0%,
-    100% {
-        opacity: 1
-    }
-
-    50% {
-        opacity: 0.3
-    }
+.th-btn-ghost {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--text-sub);
+    font-size: 0.75rem;
+    padding: 3px 9px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s;
 }
 
-/* ---- メイン卓 ---- */
-.game-table {
+.th-btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+}
+
+.th-btn-ghost.danger:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: #ef4444;
+    color: #f87171;
+}
+
+/* ============================================================
+   対局卓 (スクエア卓コンテナ)
+   ============================================================ */
+.tenhou-table-wrapper {
     flex: 1;
-    display: grid;
-    grid-template-columns: 140px 1fr 140px;
-    grid-template-rows: 1fr 120px;
-    grid-template-areas:
-        "left  center right"
-        "left  bottom right";
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
     overflow: hidden;
-    padding: 8px;
-    gap: 6px;
-    min-height: 0;
     position: relative;
 }
 
-/* 上プレイヤー(対面) は別途絶対配置 */
-.player-top {
+.tenhou-table {
+    width: min(860px, 98vw);
+    height: min(720px, calc(100vh - 100px));
+    aspect-ratio: 4 / 3.4;
+    background: radial-gradient(circle at center, var(--th-felt-light) 0%, var(--th-felt-main) 60%, var(--th-felt-dark) 100%);
+    border: 8px solid var(--th-frame-wood);
+    border-radius: 14px;
+    box-shadow: 
+        inset 0 0 40px rgba(0, 0, 0, 0.7),
+        0 12px 36px rgba(0, 0, 0, 0.9),
+        0 0 0 2px rgba(245, 197, 66, 0.15);
+    position: relative;
+    display: grid;
+    grid-template-rows: 64px 1fr 100px;
+    grid-template-columns: 80px 1fr 80px;
+    grid-template-areas:
+        "top-l   top    top-r"
+        "left    center right"
+        "bot-l   bottom bot-r";
+    overflow: hidden;
+}
+
+/* 卓布の細い飾り枠線 */
+.table-felt-overlay {
     position: absolute;
-    top: 56px;
-    left: 160px;
-    right: 160px;
-    z-index: 2;
+    inset: 16px;
+    border: 1px solid var(--th-felt-line);
+    border-radius: 8px;
+    pointer-events: none;
 }
 
-/* ---- プレイヤーエリア ---- */
-.player-area {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    transition: filter 0.2s;
-}
-
-.player-area.current-turn {
-    filter: drop-shadow(0 0 8px rgba(200, 168, 75, 0.6));
-}
-
-.player-bottom {
-    grid-area: bottom;
-    align-items: center;
-}
-
-.player-left {
-    grid-area: left;
-    padding-top: 60px;
-}
-
-.player-right {
-    grid-area: right;
-    padding-top: 60px;
-}
-
-.player-top {
-    align-items: center;
-}
-
-/* プレイヤー情報帯 */
-.player-info {
+/* ---- 各プレイヤーズゾーン ---- */
+.player-zone {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    background: var(--bg-panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 4px 10px;
-    font-size: 0.8rem;
+    z-index: 5;
 }
 
-.player-wind {
-    font-family: 'Noto Serif JP', serif;
-    font-size: 1.1rem;
-    color: var(--accent-gold);
-    font-weight: 700;
-    min-width: 1.2em;
-}
-
-.player-name {
-    color: var(--text-muted);
-    font-size: 0.78rem;
-}
-
-.player-score {
-    margin-left: auto;
-    color: var(--text-primary);
-    font-weight: 500;
-    font-size: 0.82rem;
-}
-
-.riichi-badge {
-    background: var(--accent-red);
-    color: white;
-    font-size: 0.65rem;
-    padding: 2px 6px;
-    border-radius: 10px;
-    font-weight: 700;
-    animation: pulse 0.8s infinite;
-}
-
-@keyframes pulse {
-
-    0%,
-    100% {
-        opacity: 1
-    }
-
-    50% {
-        opacity: 0.6
-    }
-}
-
-/* ---- 捨て牌エリア ---- */
-.discards {
-    min-height: 36px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px;
-    padding: 4px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: var(--radius-sm);
-}
-
-/* ---- 手牌エリア ---- */
-.hand-area {
-    display: flex;
-    gap: 3px;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    min-height: 48px;
-}
-
-.player-bottom .hand-area {
+.zone-top {
+    grid-area: top;
     justify-content: center;
+    padding-top: 4px;
 }
 
-.melds-area {
+.zone-left {
+    grid-area: left;
+    justify-content: center;
+    padding-left: 6px;
+}
+
+.zone-right {
+    grid-area: right;
+    justify-content: center;
+    padding-right: 6px;
+}
+
+.zone-bottom {
+    grid-area: bottom;
+    justify-content: center;
+    align-items: flex-end;
+    padding-bottom: 8px;
+    z-index: 20;
+}
+
+/* 手牌並び共通 */
+.hand-row {
     display: flex;
-    gap: 6px;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.hand-row.vertical {
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+}
+
+.hand-tiles {
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.hand-row.vertical .hand-tiles {
+    flex-direction: column;
+    gap: 1px;
+}
+
+/* ツモ牌スロット (マージン隙間) */
+.drawn-slot {
+    display: flex;
+    align-items: flex-end;
+}
+
+.zone-top .drawn-slot {
     margin-left: 10px;
 }
 
-.meld {
+.zone-bottom .my-drawn-slot {
+    margin-left: 14px; /* 自家ツモ牌の明確な隙間！ */
+}
+
+.zone-left .drawn-slot {
+    margin-top: 8px;
+}
+
+.zone-right .drawn-slot {
+    margin-bottom: 8px;
+}
+
+/* 副露エリア */
+.melds-container {
     display: flex;
+    gap: 4px;
+    position: absolute;
+}
+
+.zone-top .melds-container {
+    right: 12px;
+    top: 6px;
+}
+
+.zone-left .melds-container {
+    top: 12px;
+    left: 4px;
+    flex-direction: column;
+}
+
+.zone-right .melds-container {
+    bottom: 12px;
+    right: 4px;
+    flex-direction: column;
+}
+
+.zone-bottom .my-melds-container {
+    right: 12px;
+    bottom: 8px;
+}
+
+.meld-group {
+    display: flex;
+    gap: 1px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 2px 3px;
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   卓中央コア: 河 (捨牌 6x3) & サイコロボックス (卓心)
+   ============================================================ */
+.table-center-core {
+    grid-area: center;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ---- 河 (捨牌) ---- */
+.kawa {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+    pointer-events: none;
+}
+
+/* 6枚×3段グリッド (四家共通: 横6枚×縦3段、各プレイヤー視点) */
+.kawa-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 26px);
+    grid-template-rows: repeat(3, 36px);
+    gap: 1px 1px;
+    width: 161px;
+    height: 110px;
+    pointer-events: auto;
+}
+
+/* 自家 (下): 0deg 手前から中央へ */
+.kawa-bottom {
+    transform: translate(-50%, -50%) translateY(169px) rotate(0deg);
+}
+
+/* 対面 (上): 180deg 奥から中央へ、対面から見て正立 */
+.kawa-top {
+    transform: translate(-50%, -50%) translateY(-169px) rotate(180deg);
+}
+
+/* 上家 (左): 90deg 左から中央へ、上家から見て正立 */
+.kawa-left {
+    transform: translate(-50%, -50%) translateX(-169px) rotate(90deg);
+}
+
+/* 下家 (右): -90deg 右から中央へ、下家から見て正立 */
+.kawa-right {
+    transform: translate(-50%, -50%) translateX(169px) rotate(-90deg);
+}
+
+/* 河の中のリーチ宣言牌 (グリッド幅26px×36pxを崩さずに綺麗に横向き) */
+.kawa-grid .tenhou-tile.tile-horizontal {
+    width: 26px !important;
+    height: 36px !important;
+}
+
+.kawa-grid .tenhou-tile.tile-horizontal .tile-body {
+    transform: rotate(90deg);
+}
+
+/* 最新打牌のハイライト */
+.kawa-grid .tenhou-tile.is-latest-discard {
+    position: relative;
+    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.9));
+}
+
+
+.kawa-grid .tenhou-tile.is-latest-discard::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 7px;
+    height: 7px;
+    background: #ef4444;
+    border-radius: 50%;
+    box-shadow: 0 0 6px #ef4444;
+}
+
+/* ツモ切り牌の表現 (わずかに影) */
+.kawa-grid .tenhou-tile.is-tsumogiri {
+    filter: brightness(0.88);
+}
+
+/* ---- 中央サイコロボックス (卓心) ---- */
+.tenhou-center-box {
+    width: 216px;
+    height: 216px;
+    background: var(--cbox-bg);
+    border: 3px solid var(--cbox-border);
+    border-radius: 12px;
+    box-shadow: 
+        inset 0 0 16px rgba(0, 0, 0, 0.9),
+        0 6px 20px rgba(0, 0, 0, 0.7);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 15;
+}
+
+/* 4辺の座席帯 */
+.cbox-edge {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 10px;
+    background: rgba(10, 12, 14, 0.85);
+    transition: all 0.25s ease;
+}
+
+.cbox-player-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+.cbox-wind {
+    font-family: 'Noto Serif JP', serif;
+    font-size: 0.9rem;
+    font-weight: 900;
+    color: var(--accent-gold);
+}
+
+.cbox-name {
+    font-size: 0.7rem;
+    color: var(--text-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 64px;
+}
+
+.cbox-score {
+    margin-left: auto;
+    font-family: 'Share Tech Mono', 'Orbitron', monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.05em;
+}
+
+/* 上辺 (対面) */
+.edge-top {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px 8px 0 0;
+}
+
+/* 下辺 (自家) */
+.edge-bottom {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0 0 8px 8px;
+}
+
+/* 左辺 (上家) */
+.edge-left {
+    left: 0;
+    top: 30px;
+    bottom: 30px;
+    width: 32px;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    flex-direction: column;
+    justify-content: center;
+    padding: 6px 2px;
+}
+
+.edge-left .cbox-player-info {
+    flex-direction: column;
     gap: 2px;
 }
 
-/* ---- 卓中央 ---- */
-.table-center {
-    grid-area: center;
+.edge-left .cbox-score {
+    margin: 0;
+    font-size: 0.68rem;
+    writing-mode: vertical-rl;
+}
+
+.edge-left .cbox-name {
+    display: none; /* 幅が狭いため名前はツールチップ等 */
+}
+
+/* 右辺 (下家) */
+.edge-right {
+    right: 0;
+    top: 30px;
+    bottom: 30px;
+    width: 32px;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    flex-direction: column;
+    justify-content: center;
+    padding: 6px 2px;
+}
+
+.edge-right .cbox-player-info {
+    flex-direction: column;
+    gap: 2px;
+}
+
+.edge-right .cbox-score {
+    margin: 0;
+    font-size: 0.68rem;
+    writing-mode: vertical-rl;
+}
+
+.edge-right .cbox-name {
+    display: none;
+}
+
+/* 手番（アクティブターン）の発光エフェクト */
+.cbox-edge.active-turn {
+    background: rgba(245, 158, 11, 0.22);
+}
+
+.edge-top.active-turn {
+    border-bottom: 2px solid var(--cbox-active);
+    box-shadow: 0 2px 10px var(--cbox-active-glow);
+}
+
+.edge-bottom.active-turn {
+    border-top: 2px solid var(--cbox-active);
+    box-shadow: 0 -2px 10px var(--cbox-active-glow);
+}
+
+.edge-left.active-turn {
+    border-right: 2px solid var(--cbox-active);
+    box-shadow: 2px 0 10px var(--cbox-active-glow);
+}
+
+.edge-right.active-turn {
+    border-left: 2px solid var(--cbox-active);
+    box-shadow: -2px 0 10px var(--cbox-active-glow);
+}
+
+/* リーチ棒スロット */
+.cbox-riichi-slot {
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-.center-content {
+.edge-bottom .cbox-riichi-slot,
+.edge-top .cbox-riichi-slot {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.edge-bottom .cbox-riichi-slot {
+    top: -14px;
+}
+
+.edge-top .cbox-riichi-slot {
+    bottom: -14px;
+}
+
+.edge-left .cbox-riichi-slot {
+    position: absolute;
+    right: -16px;
+    top: 50%;
+    transform: translateY(-50%) rotate(90deg);
+}
+
+.edge-right .cbox-riichi-slot {
+    position: absolute;
+    left: -16px;
+    top: 50%;
+    transform: translateY(-50%) rotate(90deg);
+}
+
+/* コンソール中央表示部 */
+.cbox-inner {
+    width: 144px;
+    height: 144px;
+    background: var(--cbox-inner-bg);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    padding: 8px 6px;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 
-.dora-section {
-    text-align: center;
-}
-
-.dora-label {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    margin-bottom: 4px;
+.cbox-round-line {
+    font-size: 0.82rem;
+    font-family: 'Noto Serif JP', serif;
+    font-weight: 700;
+    color: var(--accent-gold);
     letter-spacing: 0.05em;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
 }
 
-.dora-tiles {
+.cbox-sub {
+    font-size: 0.72rem;
+    color: var(--text-sub);
+    margin-left: 4px;
+}
+
+.cbox-dora-section {
     display: flex;
-    gap: 4px;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.cbox-dora-label {
+    font-size: 0.62rem;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+}
+
+.cbox-dora-tiles {
+    display: flex;
+    gap: 2px;
+    min-height: 32px;
+}
+
+.cbox-status-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0 4px;
+}
+
+.cbox-wall {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+}
+
+.cbox-wall .wall-lbl {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+}
+
+.cbox-wall .wall-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #ffffff;
 }
 
 .phase-badge {
-    padding: 5px 14px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 700;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    letter-spacing: 0.05em;
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-sub);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.phase-playing {
-    background: rgba(34, 197, 94, 0.2);
+.phase-badge.phase-playing {
+    background: rgba(34, 197, 94, 0.15);
     border-color: #22c55e;
     color: #86efac;
 }
 
-.phase-ron {
-    background: rgba(239, 68, 68, 0.2);
+.phase-badge.phase-ron {
+    background: rgba(239, 68, 68, 0.25);
     border-color: #ef4444;
     color: #fca5a5;
+    animation: blink 0.8s infinite;
 }
 
-.phase-tsumo {
-    background: rgba(251, 191, 36, 0.2);
-    border-color: #fbbf24;
+.phase-badge.phase-tsumo {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: #f59e0b;
     color: #fde68a;
-}
-
-.phase-scoring {
-    background: rgba(147, 51, 234, 0.2);
-    border-color: #9333ea;
-    color: #d8b4fe;
-}
-
-.phase-draw {
-    background: rgba(100, 116, 139, 0.2);
-    border-color: #64748b;
-    color: #cbd5e1;
-}
-
-.phase-end {
-    background: rgba(15, 23, 42, 0.4);
-    border-color: #1e293b;
-    color: #64748b;
-}
-
-.wall-count {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-.wall-count-value {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-left: 4px;
+    animation: blink 0.8s infinite;
 }
 
 /* ============================================================
-   牌スタイル
+   麻雀牌スタイル
    ============================================================ */
+.tenhou-tile {
+    display: inline-block;
+    position: relative;
+    cursor: default;
+    transition: transform 0.12s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.12s;
+    user-select: none;
+}
 
-.tile {
-    display: inline-flex;
+.tenhou-tile .tile-body {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--radius-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+/* 表向き牌 */
+.tenhou-tile.tile-face .tile-body {
+    background: var(--tile-white-grad);
+    border: 1px solid var(--tile-border);
+    border-bottom: 2px solid #b8ac96;
+    box-shadow: 
+        0 2px 5px var(--tile-shadow),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+}
+
+.tile-front-layer {
+    width: 100%;
+    height: 100%;
+    display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--tile-bg);
-    border: 1px solid var(--tile-border);
-    border-bottom: 3px solid var(--tile-border);
-    border-radius: 4px;
-    color: #1a1a1a;
-    font-family: 'Noto Serif JP', serif;
-    line-height: 1;
-    cursor: default;
-    user-select: none;
-    transition: transform 0.12s, box-shadow 0.12s;
-    box-shadow: 0 2px 4px var(--tile-shadow);
 }
 
-/* サイズ */
-.tile-lg {
-    width: 34px;
-    height: 46px;
-    font-size: 24px;
+.tile-face-svg {
+    width: 86%;
+    height: 86%;
+    pointer-events: none;
 }
 
-.tile-sm {
-    width: 24px;
-    height: 34px;
-    font-size: 16px;
+/* 伏せ牌 (伝統の黄色竹背) */
+.tenhou-tile.tile-back .tile-body {
+    background: var(--tile-bamboo-bg);
+    border: 1px solid var(--tile-bamboo-border);
+    border-bottom: 2px solid #754602;
+    box-shadow: 
+        0 2px 4px var(--tile-shadow),
+        inset 0 1px 0 rgba(255, 235, 180, 0.6);
 }
 
-.tile-xs {
-    width: 20px;
-    height: 28px;
-    font-size: 13px;
+/* 竹背のリアルな木目テクスチャ線 */
+.tile-bamboo-back {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background: 
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 3px,
+            rgba(0, 0, 0, 0.04) 3px,
+            rgba(0, 0, 0, 0.04) 4px
+        );
 }
 
-/* 裏向き */
-.tile.back {
-    background: linear-gradient(135deg, #1a3a7a 0%, #0f2050 100%);
-    border-color: #2a4a9a;
-    font-size: 0 !important;
-}
-
-.tile.back::after {
+.tile-bamboo-back::after {
     content: '';
-    width: 60%;
-    height: 80%;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    position: absolute;
+    inset: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 2px;
 }
 
-/* 字牌色 */
-.tile.honor.dragon {
-    color: #cc0000;
+/* ---- 牌サイズバリエーション ---- */
+/* 手牌用 (大) */
+.tenhou-tile.tile-lg {
+    width: 36px;
+    height: 50px;
 }
 
-/* 赤ドラ */
-.tile.red-dora {
-    color: #cc0000;
+/* 河用 (中・6x3グリッド用) */
+.tenhou-tile.tile-md {
+    width: 26px;
+    height: 36px;
 }
 
-/* ドラ表示牌 */
-.tile.is-dora {
-    box-shadow: 0 0 8px rgba(200, 168, 75, 0.7);
+/* 王牌・ドラ用 (小) */
+.tenhou-tile.tile-sm {
+    width: 22px;
+    height: 30px;
 }
 
-/* 横向き（リーチ） */
-.tile.rotated {
+/* 超小型 */
+.tenhou-tile.tile-xs {
+    width: 18px;
+    height: 25px;
+}
+
+/* 横向き牌 (チー・ポン・リーチ宣言牌) */
+.tenhou-tile.tile-horizontal.tile-lg {
+    width: 50px;
+    height: 36px;
+}
+
+.tenhou-tile.tile-horizontal.tile-md {
+    width: 36px;
+    height: 26px;
+}
+
+.tenhou-tile.tile-horizontal.tile-sm {
+    width: 30px;
+    height: 22px;
+}
+
+/* 横向き時のSVG回転 */
+.tenhou-tile.tile-horizontal .tile-face-svg {
     transform: rotate(90deg);
-    margin: 0 8px;
 }
 
-/* ツモ牌ハイライト */
-.tile.just-drawn {
-    box-shadow: 0 0 10px rgba(251, 191, 36, 0.8), 0 2px 4px var(--tile-shadow);
-    transform: translateY(-4px);
-    border-color: var(--accent-gold);
+/* ドラ表示牌のハイライト */
+.tenhou-tile.is-dora {
+    box-shadow: 0 0 8px rgba(245, 197, 66, 0.8), 0 2px 4px rgba(0, 0, 0, 0.6);
 }
 
-/* インタラクティブ */
-.tile.interactive {
+/* 手牌インタラクティブ (打牌可能) */
+.tenhou-tile.interactive {
     cursor: pointer;
 }
 
-.tile.interactive:hover {
-    transform: translateY(-6px);
-    box-shadow: 0 6px 12px var(--tile-shadow), 0 0 8px rgba(200, 168, 75, 0.4);
-    z-index: 10;
+.tenhou-tile.interactive:hover {
+    transform: translateY(-8px);
+    box-shadow: 
+        0 10px 18px rgba(0, 0, 0, 0.6),
+        0 0 10px rgba(245, 197, 66, 0.5);
+    z-index: 50;
+}
+
+/* 自分の手番時の打牌可能ハイライト */
+.tenhou-tile.interactive.my-turn {
+    border-color: rgba(245, 197, 66, 0.6);
+}
+
+.tenhou-tile.interactive.my-turn:hover {
+    transform: translateY(-10px);
+    box-shadow: 
+        0 12px 22px rgba(0, 0, 0, 0.7),
+        0 0 16px rgba(245, 197, 66, 0.9);
+}
+
+/* 同種牌ホバーハイライト */
+.tenhou-tile.tile-same-highlight {
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.9), 0 2px 5px rgba(0,0,0,0.5) !important;
+    border-color: #38bdf8 !important;
+}
+
+/* リーチ棒 (1000点棒) */
+.tenhou-riichi-stick {
+    width: 56px;
+    height: 9px;
+    background: linear-gradient(180deg, #ffffff 0%, #ebe6d8 100%);
+    border: 1px solid #c4b99f;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     position: relative;
 }
 
-.tile.interactive.my-turn:hover {
-    box-shadow: 0 6px 16px var(--tile-shadow), 0 0 12px rgba(200, 168, 75, 0.6);
+.tenhou-riichi-stick .stick-dot {
+    width: 5px;
+    height: 5px;
+    background: #e62b2b;
+    border-radius: 50%;
+    box-shadow: 0 0 2px rgba(230, 43, 43, 0.8);
 }
 
 /* ============================================================
-   アクションパネル
+   フッターバー: トグルスイッチ & アクションパネル
    ============================================================ */
-
-.action-panel {
+.tenhou-bottom-bar {
+    height: 52px;
+    background: #14171a;
+    border-top: 1px solid #282e36;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 1.2rem;
     flex-shrink: 0;
-    background: rgba(0, 0, 0, 0.75);
-    border-top: 1px solid var(--border);
-    padding: 8px 12px 6px;
+    z-index: 100;
+}
+
+/* プレイヤートグル (自動和了・鳴きなし・ツモ切り・理牌) */
+.tenhou-toggles {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+}
+
+.th-toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--text-sub);
+    transition: color 0.15s;
+}
+
+.th-toggle-item:hover {
+    color: #ffffff;
+}
+
+.th-toggle-item input[type="checkbox"] {
+    display: none;
+}
+
+.th-checkbox-custom {
+    width: 15px;
+    height: 15px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 3px;
+    position: relative;
+    transition: all 0.15s;
+}
+
+.th-toggle-item input[type="checkbox"]:checked + .th-checkbox-custom {
+    background: var(--accent-gold);
+    border-color: var(--accent-gold);
+}
+
+.th-toggle-item input[type="checkbox"]:checked + .th-checkbox-custom::after {
+    content: '✔';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10px;
+    color: #111;
+    font-weight: 900;
+}
+
+/* アクションパネル & ボタン */
+.tenhou-action-panel {
+    display: flex;
+    align-items: center;
 }
 
 .action-buttons {
     display: flex;
-    gap: 8px;
     align-items: center;
-    flex-wrap: wrap;
-    margin-bottom: 4px;
+    gap: 0.6rem;
 }
 
-.turn-badge {
-    background: rgba(200, 168, 75, 0.15);
-    border: 1px solid var(--border-bright);
-    color: var(--accent-gold);
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-}
-
-.action-hint {
-    color: var(--text-muted);
-    font-size: 0.78rem;
-    padding: 0 4px;
-    font-style: italic;
-}
-
-.custom-event {
-    border-top: 1px solid var(--border);
-    padding-top: 4px;
-    margin-top: 4px;
-}
-
-.custom-event summary {
-    cursor: pointer;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    user-select: none;
-    padding: 2px 0;
-}
-
-.custom-event-body {
-    display: flex;
-    gap: 8px;
-    margin-top: 6px;
-    align-items: flex-start;
-}
-
-.custom-event-body textarea {
-    flex: 1;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border);
+/* アクションボタン */
+.btn-th-act {
+    padding: 0.45rem 1.1rem;
+    background: rgba(20, 24, 28, 0.95);
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
     border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-family: 'Courier New', monospace;
-    font-size: 0.75rem;
-    padding: 6px;
-    resize: vertical;
-    min-height: 52px;
+    color: #ffffff;
+    font-size: 0.9rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    transition: all 0.15s;
 }
 
-.custom-event-body textarea:focus {
-    outline: none;
-    border-color: var(--accent-gold);
+.btn-th-act:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.7);
+}
+
+/* ボタンタイプ別カラー */
+/* ツモ */
+.btn-th-act.act-tsumo {
+    background: linear-gradient(180deg, #d97706 0%, #b45309 100%);
+    border-color: #fbbf24;
+    color: #fff;
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.4);
+}
+
+.btn-th-act.act-tsumo:hover {
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.8);
+}
+
+/* ロン */
+.btn-th-act.act-ron {
+    background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+    border-color: #f87171;
+    color: #fff;
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+}
+
+.btn-th-act.act-ron:hover {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.8);
+}
+
+/* 立直 */
+.btn-th-act.act-riichi {
+    background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+    border-color: #60a5fa;
+    color: #fff;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+.btn-th-act.act-riichi:hover {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.8);
+}
+
+/* ポン・チー・カン */
+.btn-th-act.act-call {
+    background: linear-gradient(180deg, #16a34a 0%, #15803d 100%);
+    border-color: #4ade80;
+    color: #fff;
+}
+
+/* スキップ / パス */
+.btn-th-act.act-pass {
+    background: rgba(30, 36, 42, 0.8);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--text-sub);
+}
+
+/* ツモ切りボタン */
+.btn-th-act.act-tsumogiri {
+    background: rgba(40, 48, 56, 0.9);
+    border-color: rgba(255, 255, 255, 0.3);
+    font-size: 0.82rem;
+}
+
+/* 手番バッジ */
+.th-turn-indicator {
+    font-size: 0.8rem;
+    color: var(--accent-gold);
+    font-weight: 700;
+    padding: 0 8px;
 }
 
 /* ============================================================
-   イベントログ
+   折りたたみイベントログ
    ============================================================ */
-
-.event-log-panel {
-    flex-shrink: 0;
-    height: 90px;
-    background: rgba(0, 0, 0, 0.8);
-    border-top: 1px solid var(--border);
+.event-log-drawer {
+    position: fixed;
+    bottom: 52px;
+    right: 12px;
+    width: 360px;
+    max-height: 320px;
+    background: rgba(16, 20, 24, 0.95);
+    border: 1px solid #303844;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
     display: flex;
     flex-direction: column;
+    z-index: 150;
+    backdrop-filter: blur(10px);
 }
 
-.event-log-header {
+.log-drawer-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 3px 10px;
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: #1e242c;
+    border-bottom: 1px solid #303844;
+    font-size: 0.75rem;
+    color: var(--text-sub);
+}
+
+.drawer-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.th-btn-xs {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--text-sub);
+    font-size: 0.68rem;
+    padding: 1px 6px;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.th-btn-xs:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
 }
 
 .event-log {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 10px;
+    padding: 6px 8px;
+    font-family: 'Share Tech Mono', monospace;
     font-size: 0.72rem;
-    font-family: 'Courier New', monospace;
     display: flex;
     flex-direction: column;
-    gap: 1px;
-}
-
-.event-log::-webkit-scrollbar {
-    width: 4px;
-}
-
-.event-log::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.event-log::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 2px;
+    gap: 3px;
+    height: 180px;
 }
 
 .log-entry {
     display: flex;
-    gap: 8px;
-    align-items: baseline;
+    gap: 6px;
 }
 
 .log-time {
-    color: #444;
-    flex-shrink: 0;
-    font-size: 0.65rem;
-}
-
-.log-event {
-    flex: 1;
-    word-break: break-all;
-}
-
-.log-system {
-    color: #60a5fa;
-}
-
-.log-action {
-    color: var(--accent-gold);
-}
-
-.log-game-event {
-    color: #a3e635;
-}
-
-.log-branching {
-    color: #f472b6;
-}
-
-.log-state-update {
-    color: #94a3b8;
-}
-
-.log-error {
-    color: #f87171;
-}
-
-/* ============================================================
-   ボタン
-   ============================================================ */
-
-.btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4em;
-    padding: 0.45rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 0.82rem;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, transform 0.1s;
-    white-space: nowrap;
-    font-weight: 500;
-}
-
-.btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: var(--border-bright);
-}
-
-.btn:active {
-    transform: scale(0.97);
-}
-
-.btn-sm {
-    padding: 0.3rem 0.7rem;
-    font-size: 0.75rem;
-}
-
-.btn-xs {
-    padding: 0.2rem 0.5rem;
-    font-size: 0.7rem;
-}
-
-.btn-lg {
-    padding: 0.75rem 1.8rem;
-    font-size: 1rem;
-    font-weight: 700;
-    width: 100%;
-    justify-content: center;
-    margin-top: 0.5rem;
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, #c8a84b, #a07830);
-    border-color: var(--accent-gold);
-    color: #1a1000;
-    font-weight: 700;
-}
-
-.btn-primary:hover {
-    background: linear-gradient(135deg, #e8c870, #c8a84b);
-}
-
-.btn-success {
-    background: rgba(34, 197, 94, 0.2);
-    border-color: #22c55e;
-    color: #86efac;
-}
-
-.btn-success:hover {
-    background: rgba(34, 197, 94, 0.35);
-}
-
-.btn-danger {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: #ef4444;
-    color: #fca5a5;
-}
-
-.btn-danger:hover {
-    background: rgba(239, 68, 68, 0.35);
-}
-
-.btn-secondary {
-    background: rgba(100, 116, 139, 0.2);
-    border-color: #64748b;
-    color: #cbd5e1;
-}
-
-.btn-ghost {
-    background: transparent;
-    border-color: transparent;
     color: var(--text-muted);
 }
 
-.btn-ghost:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--border);
+.log-system { color: #94a3b8; }
+.log-action { color: #f59e0b; }
+.log-game-event { color: #38bdf8; }
+.log-error { color: #ef4444; }
+
+.log-custom-input {
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+    border-top: 1px solid #303844;
 }
 
-.btn-action {
-    padding: 0.4rem 1rem;
-    font-size: 0.8rem;
-}
-
-.btn-icon {
-    font-size: 1em;
+.log-custom-input input {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid #303844;
+    border-radius: 2px;
+    color: #fff;
+    padding: 2px 6px;
+    font-size: 0.72rem;
+    font-family: monospace;
 }
 
 /* ============================================================
-   モーダル
+   和了・精算リザルトモーダル
    ============================================================ */
-
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
-    backdrop-filter: blur(4px);
+    z-index: 200;
 }
 
-.modal {
-    background: #111;
-    border: 1px solid var(--border-bright);
+.tenhou-result-card {
+    width: min(540px, 94vw);
+    background: rgba(20, 24, 28, 0.96);
+    border: 2px solid var(--accent-gold);
     border-radius: 12px;
-    padding: 2rem;
-    width: min(500px, 90vw);
-    box-shadow: var(--shadow);
+    padding: 1.8rem;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 30px rgba(245, 197, 66, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
 }
 
-.modal-header {
+.result-head {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 0.8rem;
+}
+
+.result-badge {
+    background: #ef4444;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.result-head h2 {
+    font-family: 'Noto Serif JP', serif;
+    font-size: 1.4rem;
+    color: #fff;
+}
+
+.result-type-tag {
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--accent-gold);
+    font-weight: 700;
+}
+
+.result-hand-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.result-hand-label {
+    font-size: 0.72rem;
+    color: var(--text-sub);
+}
+
+.result-hand-tiles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 8px;
+    border-radius: 6px;
+}
+
+.result-dora-section {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.75rem;
+}
+
+.result-dora-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dora-lbl {
+    color: var(--text-sub);
+}
+
+.dora-inline-tiles {
+    display: flex;
+    gap: 2px;
+}
+
+.result-yaku-container {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
+    gap: 1rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 8px;
+    padding: 1rem;
 }
 
-.modal-header h3 {
+.yaku-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.yaku-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+}
+
+.yaku-han {
     color: var(--accent-gold);
-    font-size: 1rem;
+    font-weight: 700;
+    margin-left: 12px;
 }
 
-.modal-close {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
+.result-total-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    padding-left: 1rem;
+}
+
+.result-fu-han {
+    font-size: 0.82rem;
+    color: var(--text-sub);
+}
+
+.result-point-title {
+    font-family: 'Noto Serif JP', serif;
     font-size: 1.2rem;
-    padding: 4px;
-}
-
-.modal-body pre {
-    font-size: 0.75rem;
-    overflow: auto;
-    max-height: 60vh;
-    color: #86efac;
-    font-family: 'Courier New', monospace;
-}
-
-.modal-result {
-    text-align: center;
-}
-
-.result-icon {
-    font-size: 3rem;
-    margin-bottom: 0.5rem;
-}
-
-.modal-result h2 {
+    font-weight: 900;
     color: var(--accent-gold);
-    margin-bottom: 1rem;
+    margin-top: 2px;
 }
 
-.modal-result #result-details {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-bottom: 1.5rem;
-    line-height: 1.8;
+.result-points {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.6rem;
+    font-weight: 900;
+    color: #ffffff;
 }
 
-/* ============================================================
-   セパレーター
-   ============================================================ */
-.separator {
-    color: var(--text-muted);
-    margin: 0 4px;
+.result-payment-split {
+    font-size: 0.78rem;
+    color: var(--text-sub);
 }
 
-/* ============================================================
-   スクロールバー全体
-   ============================================================ */
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+.result-footer-actions {
+    display: flex;
+    justify-content: flex-end;
 }
 
-::-webkit-scrollbar-track {
-    background: transparent;
+.btn-tenhou-modal-ok {
+    padding: 0.6rem 2rem;
+    background: linear-gradient(180deg, #d49a1d 0%, #b87b0a 100%);
+    border: 1px solid #f5c542;
+    border-radius: var(--radius-sm);
+    color: #111;
+    font-weight: 800;
+    font-size: 0.95rem;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(184, 123, 10, 0.4);
 }
 
-::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 3px;
+.btn-tenhou-modal-ok:hover {
+    background: linear-gradient(180deg, #f5c542 0%, #d49a1d 100%);
+}
+
+/* 共通ユーティリティ */
+.hidden {
+    display: none !important;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
 }

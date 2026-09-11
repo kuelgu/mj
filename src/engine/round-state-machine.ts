@@ -252,6 +252,229 @@ export class RoundStateMachine {
           events
         };
 
+      case 'PON': {
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (!player) throw new Error(`Player ${event.player} not found`);
+
+        const targetTile = event.tile || this.state.lastDiscard;
+        if (!targetTile) throw new Error('No target tile to call pon on');
+
+        // 手牌から同種牌を2枚探す
+        const matchingIndices: number[] = [];
+        for (let i = 0; i < player.hand.length; i++) {
+          const t = player.hand[i];
+          if (t.suit === targetTile.suit && t.rank === targetTile.rank && t.honorType === targetTile.honorType) {
+            matchingIndices.push(i);
+            if (matchingIndices.length === 2) break;
+          }
+        }
+
+        if (matchingIndices.length < 2) {
+          throw new Error(`Player ${event.player} does not have 2 matching tiles for PON`);
+        }
+
+        // 捨て牌を捨てたプレイヤーを特定して、その捨て牌を取り除く
+        let fromPlayer: Wind | undefined;
+        for (const p of this.state.players) {
+          const lastIdx = p.discards.length - 1;
+          if (lastIdx >= 0 && (p.discards[lastIdx].id === targetTile.id || 
+              (p.discards[lastIdx].suit === targetTile.suit && p.discards[lastIdx].rank === targetTile.rank && p.discards[lastIdx].honorType === targetTile.honorType))) {
+            fromPlayer = p.seat;
+            p.discards.splice(lastIdx, 1);
+            break;
+          }
+        }
+
+        // 大きいインデックスからspliceして消費
+        const consumed: TileInstance[] = [];
+        matchingIndices.sort((a, b) => b - a);
+        for (const idx of matchingIndices) {
+          consumed.push(player.hand.splice(idx, 1)[0]);
+        }
+
+        const meld = {
+          type: 'pon' as const,
+          tiles: [...consumed, targetTile],
+          calledFrom: fromPlayer
+        };
+        player.melds.push(meld);
+
+        // 手番を鳴いたプレイヤーに移動（14枚相当なので打牌待ち）
+        this.state.currentPlayer = event.player;
+        this.clearIppatsu();
+
+        events.push(`${event.player} called PON on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
+        return { newState: this.state, newPhase: 'playing', events };
+      }
+
+      case 'CHI': {
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (!player) throw new Error(`Player ${event.player} not found`);
+
+        const targetTile = event.tile || this.state.lastDiscard;
+        if (!targetTile || targetTile.suit === 'honor' || typeof targetTile.rank !== 'number') {
+          throw new Error('Invalid target tile for CHI');
+        }
+
+        // 手牌から順子になる2枚を探す
+        let consumed: TileInstance[] = [];
+        if ('meldTiles' in event && Array.isArray((event as any).meldTiles) && (event as any).meldTiles.length === 2) {
+          const reqTiles = (event as any).meldTiles as TileInstance[];
+          for (const req of reqTiles) {
+            const idx = player.hand.findIndex(t => t.id === req.id || (t.suit === req.suit && t.rank === req.rank));
+            if (idx === -1) throw new Error('Required tile for CHI not found in hand');
+            consumed.push(player.hand.splice(idx, 1)[0]);
+          }
+        } else {
+          // 自動探索: (r-2, r-1), (r-1, r+1), (r+1, r+2)
+          const r = targetTile.rank;
+          const s = targetTile.suit;
+          const combinations = [
+            [r - 2, r - 1],
+            [r - 1, r + 1],
+            [r + 1, r + 2]
+          ];
+          let foundPair: [number, number] | null = null;
+          for (const [r1, r2] of combinations) {
+            if (r1 >= 1 && r1 <= 9 && r2 >= 1 && r2 <= 9) {
+              const has1 = player.hand.some(t => t.suit === s && t.rank === r1);
+              const has2 = player.hand.some(t => t.suit === s && t.rank === r2);
+              if (has1 && has2) {
+                foundPair = [r1, r2];
+                break;
+              }
+            }
+          }
+          if (!foundPair) throw new Error(`Player ${event.player} cannot form sequence for CHI`);
+
+          const idx1 = player.hand.findIndex(t => t.suit === s && t.rank === foundPair![0]);
+          const t1 = player.hand.splice(idx1, 1)[0];
+          const idx2 = player.hand.findIndex(t => t.suit === s && t.rank === foundPair![1]);
+          const t2 = player.hand.splice(idx2, 1)[0];
+          consumed = [t1, t2];
+        }
+
+        // 直前の打牌者の河から対象牌を除去
+        let fromPlayer: Wind | undefined;
+        for (const p of this.state.players) {
+          const lastIdx = p.discards.length - 1;
+          if (lastIdx >= 0 && (p.discards[lastIdx].id === targetTile.id || 
+              (p.discards[lastIdx].suit === targetTile.suit && p.discards[lastIdx].rank === targetTile.rank))) {
+            fromPlayer = p.seat;
+            p.discards.splice(lastIdx, 1);
+            break;
+          }
+        }
+
+        const meld = {
+          type: 'chi' as const,
+          tiles: [...consumed, targetTile].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)),
+          calledFrom: fromPlayer
+        };
+        player.melds.push(meld);
+
+        this.state.currentPlayer = event.player;
+        this.clearIppatsu();
+
+        events.push(`${event.player} called CHI on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
+        return { newState: this.state, newPhase: 'playing', events };
+      }
+
+      case 'KAN': {
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (!player) throw new Error(`Player ${event.player} not found`);
+
+        const targetTile = event.tile || this.state.lastDiscard;
+        if (!targetTile) throw new Error('No target tile for KAN');
+
+        // 加槓チェック (ポン済みの牌に追加)
+        const existingPon = player.melds.find(m => 
+          m.type === 'pon' && 
+          m.tiles.some(t => t.suit === targetTile.suit && t.rank === targetTile.rank && t.honorType === targetTile.honorType)
+        );
+
+        // 手牌内での枚数チェック
+        const handMatches = player.hand.filter(t => 
+          t.suit === targetTile.suit && t.rank === targetTile.rank && t.honorType === targetTile.honorType
+        );
+
+        if (existingPon && handMatches.length >= 1) {
+          // 加槓 (Kakan)
+          const idx = player.hand.findIndex(t => t.id === handMatches[0].id);
+          const [kakanTile] = player.hand.splice(idx, 1);
+          existingPon.type = 'kakan';
+          existingPon.tiles.push(kakanTile);
+          existingPon.kakanTile = kakanTile;
+          events.push(`${event.player} called Kakan with ${kakanTile.id}`);
+        } else if (handMatches.length === 4 && this.state.currentPlayer === event.player) {
+          // 暗槓 (Ankan)
+          const consumed: TileInstance[] = [];
+          for (const match of handMatches) {
+            const idx = player.hand.findIndex(t => t.id === match.id);
+            consumed.push(player.hand.splice(idx, 1)[0]);
+          }
+          player.melds.push({
+            type: 'ankan',
+            tiles: consumed
+          });
+          events.push(`${event.player} called Ankan with ${targetTile.id}`);
+        } else if (handMatches.length >= 3) {
+          // 大明槓 (Daiminkan)
+          const consumed: TileInstance[] = [];
+          for (let i = 0; i < 3; i++) {
+            const idx = player.hand.findIndex(t => t.id === handMatches[i].id);
+            consumed.push(player.hand.splice(idx, 1)[0]);
+          }
+
+          // 捨て牌者の河から除去
+          let fromPlayer: Wind | undefined;
+          for (const p of this.state.players) {
+            const lastIdx = p.discards.length - 1;
+            if (lastIdx >= 0 && (p.discards[lastIdx].id === targetTile.id || 
+                (p.discards[lastIdx].suit === targetTile.suit && p.discards[lastIdx].rank === targetTile.rank && p.discards[lastIdx].honorType === targetTile.honorType))) {
+              fromPlayer = p.seat;
+              p.discards.splice(lastIdx, 1);
+              break;
+            }
+          }
+
+          player.melds.push({
+            type: 'kan',
+            tiles: [...consumed, targetTile],
+            calledFrom: fromPlayer
+          });
+          events.push(`${event.player} called Daiminkan on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
+        } else {
+          throw new Error(`Player ${event.player} does not have enough tiles for KAN`);
+        }
+
+        // カン後の嶺上牌ツモ
+        let rinshanTile: TileInstance | undefined;
+        if (this.state.deadWall.length > 0) {
+          rinshanTile = this.state.deadWall.shift();
+        } else if (this.state.wall.length > 0) {
+          rinshanTile = this.state.wall.pop();
+        }
+
+        if (rinshanTile) {
+          player.hand.push(rinshanTile);
+          events.push(`${event.player} drew rinshan tile: ${rinshanTile.id}`);
+        }
+
+        // 新カンドラめくり
+        if (this.state.deadWall.length > 0) {
+          const newDora = this.state.deadWall.shift()!;
+          this.state.doraIndicators.push(newDora);
+          events.push(`New dora indicator revealed: ${newDora.id}`);
+        }
+
+        this.state.currentPlayer = event.player;
+        this.clearIppatsu();
+
+        return { newState: this.state, newPhase: 'playing', events };
+      }
+
+
       case 'RIICHI_DECLARE': {
         const player = this.state.players.find(p => p.seat === event.player);
         if (player) {
@@ -466,6 +689,18 @@ export class RoundStateMachine {
     const idx = order.indexOf(current);
     return order[(idx + 1) % 4];
   }
+
+  /**
+   * 鳴き発生時の一発消し
+   */
+  private clearIppatsu(): void {
+    for (const p of this.state.players) {
+      if (p.riichi.declared) {
+        p.riichi.ippatsu = false;
+      }
+    }
+  }
+
 
   /**
    * 次の局に向けてプレイヤー状態をリセット
