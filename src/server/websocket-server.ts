@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameRoom, GameMessage } from './game-room.js';
 import { RoundEvent } from '../engine/round-state-machine.js';
+import { TileInstance } from '../types/tiles.js';
 
 /**
  * Client message types
@@ -8,6 +9,7 @@ import { RoundEvent } from '../engine/round-state-machine.js';
 export type ClientMessage =
   | { type: 'join_room'; roomId: string; playerId: string }
   | { type: 'game_action'; event: RoundEvent }
+  | { type: 'set_wall'; wall: TileInstance[] }
   | { type: 'get_state' };
 
 /**
@@ -86,6 +88,10 @@ export class MahjongWebSocketServer {
         this.handleGameAction(ws, message.event);
         break;
 
+      case 'set_wall':
+        this.handleSetWall(ws, message.wall);
+        break;
+
       case 'get_state':
         this.handleGetState(ws);
         break;
@@ -93,6 +99,33 @@ export class MahjongWebSocketServer {
       default:
         this.sendError(ws, 'Unknown message type');
     }
+  }
+
+  /**
+   * Handle set wall request (for replay or deterministic test scenario)
+   */
+  private handleSetWall(ws: WebSocket, wall: TileInstance[]): void {
+    const connection = this.clients.get(ws);
+    if (!connection || !connection.roomId) {
+      this.sendError(ws, 'Not in a room');
+      return;
+    }
+
+    const room = this.rooms.get(connection.roomId);
+    if (!room) {
+      this.sendError(ws, 'Room not found');
+      return;
+    }
+
+    room.setupRoundWithWall(wall);
+    this.broadcastToRoom(connection.roomId, {
+      type: 'state',
+      state: room.getState()
+    });
+    this.broadcastToRoom(connection.roomId, {
+      type: 'game_update',
+      messages: [{ type: 'game_event', event: `Custom wall set (${wall.length} tiles). Round reset to waiting.` }]
+    });
   }
 
   /**
@@ -109,6 +142,9 @@ export class MahjongWebSocketServer {
       console.log(`Created room: ${roomId}`);
     }
 
+    const room = this.rooms.get(roomId)!;
+    room.assignPlayer(playerId);
+
     // Join room
     connection.roomId = roomId;
     connection.playerId = playerId;
@@ -122,8 +158,11 @@ export class MahjongWebSocketServer {
     ws.send(JSON.stringify(response));
     console.log(`Player ${playerId} joined room ${roomId}`);
 
-    // Send current state
-    this.handleGetState(ws);
+    // Broadcast current state to all clients in room
+    this.broadcastToRoom(roomId, {
+      type: 'state',
+      state: room.getState()
+    });
   }
 
   /**

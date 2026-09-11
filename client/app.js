@@ -343,6 +343,9 @@ function onStateReceived(state) {
 
 function applyGameState(state) {
     App.gameState = state;
+    if (state && (state.phase === 'playing' || state.phase === 'waiting' || state.phase === 'dealing')) {
+        dom.resultModal.classList.add('hidden');
+    }
     renderBoard(state);
     renderActionPanel(state);
     handleAutoActions(state);
@@ -535,8 +538,12 @@ function renderPlayerSection(player, state, inGame) {
                                discards[discards.length - 1].id === state.lastDiscard.id;
 
         discards.forEach((tile, i) => {
-            // リーチ宣言牌の横向き
-            const isRiichiTile = player.riichi?.declared && player.riichi.turn !== null && i === player.riichi.turn;
+            // リーチ宣言牌の横向き (個人捨牌インデックス discardIndex と照合)
+            const isRiichiTile = player.riichi?.declared && (
+                (player.riichi.discardIndex !== undefined && player.riichi.discardIndex !== null)
+                    ? i === player.riichi.discardIndex
+                    : (player.riichi.turn !== null && i === player.riichi.turn)
+            );
             const orientation = isRiichiTile ? 'horizontal' : 'normal';
 
             // 最新打牌ハイライト
@@ -1080,3 +1087,8 @@ document.addEventListener('DOMContentLoaded', () => {
     switchScreen('connect');
     log('system', 'オンライン麻雀クライアント準備完了');
 });
+
+// テスト自動化・デバッグ用公開
+window.App = App;
+window.sendAction = sendAction;
+window.sendMsg = sendMsg;

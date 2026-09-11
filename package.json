@@ -8,6 +8,7 @@
     "build": "tsc",
     "test": "node --loader ts-node/esm --test test/runner.ts",
     "test:watch": "node --loader ts-node/esm --test --watch test/runner.ts",
+    "test:ui": "tsx test/ui/four-players.test.ts",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts"
   },

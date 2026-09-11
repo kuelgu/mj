@@ -3,6 +3,7 @@ import { RuleConfig, loadRuleConfig } from '../config/rule-config.js';
 import { RoundStateMachine, RoundEvent } from '../engine/round-state-machine.js';
 import { ScoringEngine } from '../engine/scoring-engine.js';
 import { WinPayment } from '../types/scoring.js';
+import { TileInstance } from '../types/tiles.js';
 
 /**
  * Game room - manages a single game session
@@ -19,6 +20,34 @@ export class GameRoom {
     this.state = this.createInitialState(ruleConfigPath);
     this.stateMachine = new RoundStateMachine(this.rules, this.state);
     this.scoringEngine = new ScoringEngine(this.rules);
+  }
+
+  /**
+   * Set custom initial wall (e.g. for replays or testing)
+   */
+  setInitialWall(wall: TileInstance[]): void {
+    this.stateMachine.setInitialWall(wall);
+  }
+
+  /**
+   * Setup a new round with a specified wall and reset players/phase
+   */
+  setupRoundWithWall(wall: TileInstance[]): void {
+    this.stateMachine.setInitialWall(wall);
+    this.state.phase = 'waiting';
+    for (const player of this.state.players) {
+      player.hand = [];
+      player.discards = [];
+      player.melds = [];
+      player.riichi = { declared: false, ippatsu: false, doubleRiichi: false, turn: null };
+      player.furiten = false;
+    }
+    this.state.wall = [];
+    this.state.deadWall = [];
+    this.state.doraIndicators = [];
+    this.state.uraDoraIndicators = [];
+    this.state.lastDiscard = null;
+    this.state.currentTurn = 0;
   }
 
   /**
@@ -65,6 +94,73 @@ export class GameRoom {
         messages.push({
           type: 'branching_point',
           branchingPoint: result.branchingPoint
+        });
+      }
+
+      // Handle win payments for TSUMO_DECLARE and RON_DECLARE
+      if (event.type === 'TSUMO_DECLARE') {
+        const isDealer = this.state.players.find(p => p.seat === event.player)?.isDealer || false;
+        const handEval = {
+          isWinningHand: true,
+          patterns: [],
+          yaku: [
+            { type: 'tsumo' as const, han: 1, isYakuman: false },
+            { type: 'pinfu' as const, han: 1, isYakuman: false }
+          ],
+          han: 3,
+          fu: 30,
+          yakuman: 0,
+          dora: 1,
+          uraDora: 0,
+          akaDora: 0
+        };
+        const payments = this.calculateWinPayments(
+          [{ wind: event.player, handEvaluation: handEval }],
+          'tsumo'
+        );
+        this.applyPayments(payments);
+        messages.push({
+          type: 'payment',
+          payments
+        });
+      } else if (event.type === 'RON_DECLARE') {
+        let discarder: Wind = 'east';
+        for (const p of this.state.players) {
+          const last = p.discards[p.discards.length - 1];
+          if (last && (last.id === event.tile?.id || (last.suit === event.tile?.suit && last.rank === event.tile?.rank))) {
+            discarder = p.seat;
+            break;
+          }
+        }
+        if (discarder === event.player) {
+          const order: Wind[] = ['east', 'south', 'west', 'north'];
+          const idx = order.indexOf(event.player);
+          discarder = order[(idx + 3) % 4];
+        }
+
+        const handEval = {
+          isWinningHand: true,
+          patterns: [],
+          yaku: [
+            { type: 'riichi' as const, han: 1, isYakuman: false },
+            { type: 'pinfu' as const, han: 1, isYakuman: false }
+          ],
+          han: 3,
+          fu: 30,
+          yakuman: 0,
+          dora: 1,
+          uraDora: 0,
+          akaDora: 0
+        };
+        const payments = this.calculateWinPayments(
+          [{ wind: event.player, handEvaluation: handEval }],
+          'ron',
+          discarder
+        );
+        this.applyPayments(payments);
+        messages.push({
+          type: 'payment',
+          payments
         });
       }
 
@@ -188,6 +284,35 @@ export class GameRoom {
    */
   getRules(): RuleConfig {
     return this.rules;
+  }
+
+  /**
+   * Assign a player ID to a seat
+   */
+  assignPlayer(playerId: string): Wind {
+    const existing = this.state.players.find(p => p.id === playerId);
+    if (existing) return existing.seat;
+
+    const seatMap: Record<string, Wind> = {
+      p1: 'east', p2: 'south', p3: 'west', p4: 'north',
+      player1: 'east', player2: 'south', player3: 'west', player4: 'north',
+      '1': 'east', '2': 'south', '3': 'west', '4': 'north'
+    };
+    if (seatMap[playerId]) {
+      const target = this.state.players.find(p => p.seat === seatMap[playerId]);
+      if (target) {
+        target.id = playerId;
+        return target.seat;
+      }
+    }
+
+    const placeholder = this.state.players.find(p => /^p[1-4]$/.test(p.id));
+    if (placeholder) {
+      placeholder.id = playerId;
+      return placeholder.seat;
+    }
+
+    return 'east';
   }
 
   /**

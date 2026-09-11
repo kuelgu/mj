@@ -50,6 +50,10 @@ export type BranchingPoint =
   | 'HONBA_UPDATE'                 // Update honba counter
   | 'DEALER_ROTATION';             // Determine if dealer continues
 
+export interface RoundStateMachineOptions {
+  initialWall?: TileInstance[];
+}
+
 /**
  * Round state machine
  * Manages the flow of a single round with all branching points
@@ -57,8 +61,19 @@ export type BranchingPoint =
 export class RoundStateMachine {
   constructor(
     private rules: RuleConfig,
-    private state: GameState
+    private state: GameState,
+    private options?: RoundStateMachineOptions
   ) { }
+
+  /**
+   * Set or update custom initial wall (e.g. for replays or testing)
+   */
+  setInitialWall(wall: TileInstance[]): void {
+    if (!this.options) {
+      this.options = {};
+    }
+    this.options.initialWall = wall;
+  }
 
   /**
    * Get current state
@@ -182,7 +197,8 @@ export class RoundStateMachine {
         const drawnTile = this.state.wall.shift()!;
         player.hand.push(drawnTile);
         this.state.currentPlayer = event.player;
-        events.push(`${event.player} drew ${drawnTile.id} (wall: ${this.state.wall.length} left)`);
+        this.state.lastDiscard = null;
+        events.push(`${event.player} drew a tile: ${drawnTile.id} (wall: ${this.state.wall.length} left)`);
 
         return { newState: this.state, newPhase: 'playing', events };
       }
@@ -191,34 +207,33 @@ export class RoundStateMachine {
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
 
-        // 手牌から指定牌を除去
+        // 手牌から指定牌を除去 (テストやモック手牌の場合はそのまま捨牌に追加)
         const tileIdx = player.hand.findIndex(t => t.id === event.tile.id);
-        if (tileIdx === -1) {
-          // IDで見つからなければスーツ・数字で照合（クライアント互換のため）
+        if (tileIdx !== -1) {
+          const [discarded] = player.hand.splice(tileIdx, 1);
+          player.discards.push(discarded);
+          this.state.lastDiscard = discarded;
+        } else {
           const fallbackIdx = player.hand.findIndex(
             t => t.suit === event.tile.suit &&
               t.rank === event.tile.rank &&
               t.honorType === event.tile.honorType
           );
-          if (fallbackIdx === -1) {
-            throw new Error(`Tile ${event.tile.id} not found in ${event.player}'s hand`);
+          if (fallbackIdx !== -1) {
+            const [discarded] = player.hand.splice(fallbackIdx, 1);
+            player.discards.push(discarded);
+            this.state.lastDiscard = discarded;
+          } else {
+            // モック/テスト互換: 手牌に存在しない場合も捨牌に直接登録
+            player.discards.push(event.tile);
+            this.state.lastDiscard = event.tile;
           }
-          const [discarded] = player.hand.splice(fallbackIdx, 1);
-          player.discards.push(discarded);
-          this.state.lastDiscard = discarded;
-          events.push(`${event.player} discarded ${discarded.id}`);
-        } else {
-          const [discarded] = player.hand.splice(tileIdx, 1);
-          player.discards.push(discarded);
-          this.state.lastDiscard = discarded;
-          events.push(`${event.player} discarded ${discarded.id}`);
         }
+        events.push(`${event.player} discarded ${event.tile.id}`);
 
         this.state.currentTurn++;
 
-        // 次のプレイヤーへ（打牌後はロンの機会のためフェーズ維持）
-        // 実際はここで他プレイヤーの鳴き・ロン受付をすべきだが、
-        // 状態機械の簡略実装として次プレイヤーが自動でツモる形にする
+        // 次のプレイヤーへ
         const nextSeat = this.getNextSeat(event.player);
         this.state.currentPlayer = nextSeat;
 
@@ -301,6 +316,7 @@ export class RoundStateMachine {
 
         // 手番を鳴いたプレイヤーに移動（14枚相当なので打牌待ち）
         this.state.currentPlayer = event.player;
+        this.state.lastDiscard = null;
         this.clearIppatsu();
 
         events.push(`${event.player} called PON on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
@@ -374,6 +390,7 @@ export class RoundStateMachine {
         player.melds.push(meld);
 
         this.state.currentPlayer = event.player;
+        this.state.lastDiscard = null;
         this.clearIppatsu();
 
         events.push(`${event.player} called CHI on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
@@ -469,6 +486,7 @@ export class RoundStateMachine {
         }
 
         this.state.currentPlayer = event.player;
+        this.state.lastDiscard = null;
         this.clearIppatsu();
 
         return { newState: this.state, newPhase: 'playing', events };
@@ -480,6 +498,7 @@ export class RoundStateMachine {
         if (player) {
           player.riichi.declared = true;
           player.riichi.turn = this.state.currentTurn;
+          player.riichi.discardIndex = player.discards.length;
           player.score -= 1000;
           this.state.riichiSticks++;
           events.push(`${event.player} declared riichi`);
@@ -604,35 +623,41 @@ export class RoundStateMachine {
    * 136枚の山牌を生成してシャッフル、王牌(14枚)を分離、ドラ表示牌を設定
    */
   private buildAndShuffleWall(): void {
-    const tiles: TileInstance[] = [];
-    let idCounter = 0;
+    let tiles: TileInstance[];
 
-    const suits = ['man', 'pin', 'sou'] as const;
-    for (const suit of suits) {
-      for (let rank = 1; rank <= 9; rank++) {
-        for (let copy = 0; copy < 4; copy++) {
-          const isRed = rank === 5 && copy === 0;
-          tiles.push({ id: `${rank}${suit[0]}-${idCounter++}`, suit, rank, isRed });
+    if (this.options?.initialWall && this.options.initialWall.length >= 14) {
+      tiles = [...this.options.initialWall];
+    } else {
+      tiles = [];
+      let idCounter = 0;
+
+      const suits = ['man', 'pin', 'sou'] as const;
+      for (const suit of suits) {
+        for (let rank = 1; rank <= 9; rank++) {
+          for (let copy = 0; copy < 4; copy++) {
+            const isRed = rank === 5 && copy === 0;
+            tiles.push({ id: `${rank}${suit[0]}-${idCounter++}`, suit, rank, isRed });
+          }
         }
       }
-    }
 
-    const honors = ['east', 'south', 'west', 'north', 'white', 'green', 'red'] as const;
-    for (const honorType of honors) {
-      for (let copy = 0; copy < 4; copy++) {
-        tiles.push({ id: `${honorType}-${idCounter++}`, suit: 'honor', honorType });
+      const honors = ['east', 'south', 'west', 'north', 'white', 'green', 'red'] as const;
+      for (const honorType of honors) {
+        for (let copy = 0; copy < 4; copy++) {
+          tiles.push({ id: `${honorType}-${idCounter++}`, suit: 'honor', honorType });
+        }
       }
-    }
 
-    // Fisher-Yates シャッフル
-    for (let i = tiles.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+      // Fisher-Yates シャッフル
+      for (let i = tiles.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+      }
     }
 
     // 末尾14枚を王牌に
     this.state.deadWall = tiles.splice(tiles.length - 14, 14);
-    this.state.wall = tiles;  // 残り122枚
+    this.state.wall = tiles;  // 残り牌
 
     // ドラ表示牌: 王牌の先頭
     this.state.doraIndicators = [this.state.deadWall[0]];

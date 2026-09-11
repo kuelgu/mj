@@ -12,6 +12,7 @@ function findTestFiles(dir: string): string[] {
         const stat = statSync(fullPath);
 
         if (stat.isDirectory()) {
+            if (item === 'ui') continue; // UI tests run separately via npm run test:ui
             files.push(...findTestFiles(fullPath));
         } else if (item.endsWith('.test.ts')) {
             files.push(fullPath);

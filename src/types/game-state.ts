@@ -33,6 +33,7 @@ export interface RiichiState {
   ippatsu: boolean;      // First turn after riichi
   doubleRiichi: boolean; // Riichi on first turn
   turn: number | null;   // Turn number when riichi was declared
+  discardIndex?: number | null; // Personal discard index of the riichi declaration tile
 }
 
 /**
