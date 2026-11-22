@@ -23,6 +23,8 @@ export interface PlayerState {
   riichi: RiichiState;
   furiten: boolean;
   isDealer: boolean;
+  isNpc?: boolean;
+  isOccupied?: boolean;
 }
 
 /**
@@ -55,6 +57,11 @@ export interface Meld {
  * Round wind
  */
 export type RoundWind = 'east' | 'south' | 'west' | 'north';
+
+/**
+ * Game length mode: 'east' = 東風戦 (Tonpuusen), 'south' = 東南戦 (Tonnansen / Hanchan)
+ */
+export type GameLength = 'east' | 'south';
 
 /**
  * Round number (局)
@@ -111,6 +118,7 @@ export type ActionType =
 export interface GameState {
   // Game configuration
   ruleConfigPath: string;
+  gameLength?: GameLength;
 
   // Round information
   round: Round;
@@ -130,9 +138,11 @@ export interface GameState {
   currentTurn: number;
   currentPlayer: Wind;
   lastDiscard: TileInstance | null;
+  lastDrawWasRinshan?: boolean;
 
   // Game phase
   phase: GamePhase;
+  autoStartDeadline?: number | null;
 
   // Pending actions (for multiple ron, etc.)
   pendingActions: PendingAction[];

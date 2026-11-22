@@ -44,8 +44,22 @@
                     </div>
                 </div>
 
+                <div class="lobby-group">
+                    <label>対局形式</label>
+                    <div class="game-length-selector" id="game-length-selector">
+                        <label class="length-option">
+                            <input type="radio" name="game-length" id="game-length-south" value="south" checked>
+                            <span class="length-btn">東南戦 (半荘)</span>
+                        </label>
+                        <label class="length-option">
+                            <input type="radio" name="game-length" id="game-length-east" value="east">
+                            <span class="length-btn">東風戦</span>
+                        </label>
+                    </div>
+                </div>
+
                 <div class="lobby-settings-preview">
-                    <span class="pill">東南戦</span>
+                    <span class="pill" id="preview-length-pill">東南戦</span>
                     <span class="pill">喰い断あり</span>
                     <span class="pill">赤ドラあり</span>
                     <span class="pill">25,000点持ち</span>

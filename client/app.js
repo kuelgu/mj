@@ -66,6 +66,12 @@ const App = {
 
     // 同種牌ハイライト中のキー
     hoveredTileKey: null,
+
+    // パス済みの他家打牌ID
+    passedDiscardId: null,
+
+    // マッチング待機カウントダウンタイマー
+    waitingCountdownTimer: null,
 };
 
 // ============================================================
@@ -207,7 +213,7 @@ function getTileKey(tile) {
 // WebSocket 通信
 // ============================================================
 
-function connect(url, roomId, playerId) {
+function connect(url, roomId, playerId, gameLength = 'south') {
     setStatus('connecting', '接続中...');
     log('system', `${url} に接続中...`);
 
@@ -224,7 +230,7 @@ function connect(url, roomId, playerId) {
         App.playerId = playerId;
         setStatus('connected', '接続中');
         log('system', '対局サーバーに接続しました');
-        sendMsg({ type: 'join_room', roomId, playerId });
+        sendMsg({ type: 'join_room', roomId, playerId, gameLength });
     };
 
     App.ws.onmessage = e => {
@@ -292,13 +298,13 @@ function onServerMessage(msg) {
 }
 
 function onPlayerJoined(msg) {
-    // プレイヤーIDから座席を推定 (p1/player1 → east, p2/player2 → south ...)
+    // サーバーから割り当てられた座席 (またはプレイヤーIDから推定)
     const seatMap = {
         p1: 'east', p2: 'south', p3: 'west', p4: 'north',
         player1: 'east', player2: 'south', player3: 'west', player4: 'north',
         '1': 'east', '2': 'south', '3': 'west', '4': 'north',
     };
-    App.mySeat = seatMap[msg.playerId] || 'east';
+    App.mySeat = msg.seat || seatMap[msg.playerId] || 'east';
     dom.headerRoom.textContent = `卓: ${msg.roomId} / ${msg.playerId} (${WIND_KANJI[App.mySeat]}家)`;
     log('system', `入室完了: ${msg.playerId} (座席: ${WIND_KANJI[App.mySeat]}家)`);
     switchScreen('game');
@@ -343,7 +349,7 @@ function onStateReceived(state) {
 
 function applyGameState(state) {
     App.gameState = state;
-    if (state && (state.phase === 'playing' || state.phase === 'waiting' || state.phase === 'dealing')) {
+    if (state && ['playing', 'waiting', 'dealing', 'round_end'].includes(state.phase)) {
         dom.resultModal.classList.add('hidden');
     }
     renderBoard(state);
@@ -359,7 +365,11 @@ function renderBoard(state) {
     const rNum = state.round?.number || 1;
     const honba = state.honba || 0;
     const riichiSticks = state.riichiSticks || 0;
+    const modeLabel = state.gameLength === 'east' ? '東風戦' : '東南戦';
 
+    if (App.roomId && App.playerId) {
+        dom.headerRoom.textContent = `卓: ${App.roomId} [${modeLabel}] / ${App.playerId} (${WIND_KANJI[App.mySeat]}家)`;
+    }
     dom.roundTitle.textContent = `${rWind} ${rNum} 局`;
     dom.honbaTitle.textContent = `${honba} 本場`;
     dom.riichiSticksDisplay.textContent = riichiSticks;
@@ -447,10 +457,21 @@ function renderPlayerSection(player, state, inGame) {
             // 自家手牌: 理牌 & 打牌可能時はツモ牌スロットへ分離！
             const { main, drawn } = sortHandTiles(hand, player.melds);
 
+            const isRiichiDeclared = Boolean(player.riichi?.declared);
+            const declIdx = player.riichi?.discardIndex ?? -1;
+            const curDiscards = player.discards ? player.discards.length : 0;
+            const isPostRiichi = isRiichiDeclared && curDiscards > declIdx;
+            const isRiichiDeclTurn = isRiichiDeclared && curDiscards === declIdx;
+            const riichiCandidateIds = isRiichiDeclTurn
+                ? new Set(getRiichiDiscardCandidates(hand, player.melds).map(t => t.id))
+                : null;
+
             // 純手牌
             main.forEach(tile => {
                 const isHovered = App.hoveredTileKey && getTileKey(tile) === App.hoveredTileKey;
-                const extra = `interactive${isMyTurn ? ' my-turn' : ''}${isHovered ? ' tile-same-highlight' : ''}`;
+                const canClickTile = !isPostRiichi && (!riichiCandidateIds || riichiCandidateIds.size === 0 || riichiCandidateIds.has(tile.id));
+                const interactClass = canClickTile ? `interactive${isMyTurn ? ' my-turn' : ''}` : 'tile-locked';
+                const extra = `${interactClass}${isHovered ? ' tile-same-highlight' : ''}`;
                 handContainer.insertAdjacentHTML('beforeend', 
                     MahjongTiles.renderTileHtml(tile, 'lg', extra)
                 );
@@ -459,7 +480,9 @@ function renderPlayerSection(player, state, inGame) {
             // 打牌待ち牌 (ツモ牌または鳴き直後の牌スロット)
             if (drawn) {
                 const isHovered = App.hoveredTileKey && getTileKey(drawn) === App.hoveredTileKey;
-                const extra = `interactive my-turn just-drawn${isHovered ? ' tile-same-highlight' : ''}`;
+                const canClickDrawn = !riichiCandidateIds || riichiCandidateIds.size === 0 || riichiCandidateIds.has(drawn.id);
+                const interactClass = canClickDrawn ? 'interactive my-turn just-drawn' : 'tile-locked just-drawn';
+                const extra = `${interactClass}${isHovered ? ' tile-same-highlight' : ''}`;
                 drawnSlot.insertAdjacentHTML('beforeend', 
                     MahjongTiles.renderTileHtml(drawn, 'lg', extra)
                 );
@@ -587,15 +610,314 @@ function canDaiminkan(hand, targetTile) {
 }
 
 function canChi(hand, targetTile) {
-    if (!hand || !targetTile || targetTile.suit === 'honor' || typeof targetTile.rank !== 'number') return false;
+    return getChiCombinations(hand, targetTile).length > 0;
+}
+
+/**
+ * チー可能な2枚の組み合わせ一覧を返す
+ */
+function getChiCombinations(hand, targetTile) {
+    if (!hand || !targetTile || targetTile.suit === 'honor' || typeof targetTile.rank !== 'number') return [];
     const r = targetTile.rank;
     const s = targetTile.suit;
-    const has = rank => hand.some(t => t.suit === s && t.rank === rank);
+    const findRank = rank => hand.find(t => t.suit === s && t.rank === rank);
 
-    if (r >= 3 && has(r - 2) && has(r - 1)) return true;
-    if (r >= 2 && r <= 8 && has(r - 1) && has(r + 1)) return true;
-    if (r <= 7 && has(r + 1) && has(r + 2)) return true;
+    const combos = [];
+    if (r >= 3) {
+        const t1 = findRank(r - 2);
+        const t2 = findRank(r - 1);
+        if (t1 && t2) combos.push([t1, t2]);
+    }
+    if (r >= 2 && r <= 8) {
+        const t1 = findRank(r - 1);
+        const t2 = findRank(r + 1);
+        if (t1 && t2) combos.push([t1, t2]);
+    }
+    if (r <= 7) {
+        const t1 = findRank(r + 1);
+        const t2 = findRank(r + 2);
+        if (t1 && t2) combos.push([t1, t2]);
+    }
+    return combos;
+}
+
+// ============================================================
+// クライアント側 和了形・役・聴牌・フリテン判定
+// ============================================================
+
+const CLIENT_HONORS = ['east', 'south', 'west', 'north', 'white', 'green', 'red'];
+const CLIENT_YAOCHUU = new Set([0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]);
+
+function tileToIdx(tile) {
+    if (!tile) return -1;
+    if (tile.suit === 'man') return (tile.rank || 1) - 1;
+    if (tile.suit === 'pin') return 9 + ((tile.rank || 1) - 1);
+    if (tile.suit === 'sou') return 18 + ((tile.rank || 1) - 1);
+    const h = CLIENT_HONORS.indexOf(tile.honorType);
+    return h >= 0 ? 27 + h : -1;
+}
+
+function isKokushiCounts(counts) {
+    let pair = false;
+    for (let i = 0; i < 34; i++) {
+        if (CLIENT_YAOCHUU.has(i)) {
+            if (counts[i] === 0 || counts[i] > 2) return false;
+            if (counts[i] === 2) pair = true;
+        } else if (counts[i] > 0) {
+            return false;
+        }
+    }
+    return pair;
+}
+
+function isChitoitsuCounts(counts) {
+    let pairs = 0;
+    for (let i = 0; i < 34; i++) {
+        if (counts[i] === 2) pairs++;
+        else if (counts[i] !== 0) return false;
+    }
+    return pairs === 7;
+}
+
+function findDecompositionsClient(counts, targetSets) {
+    const results = [];
+    function extract(rem, minCode, current) {
+        if (rem === 0) {
+            results.push([...current]);
+            return;
+        }
+        let first = -1;
+        for (let i = 0; i < 34; i++) {
+            if (counts[i] > 0) { first = i; break; }
+        }
+        if (first === -1) return;
+
+        const kCode = first * 2;
+        if (counts[first] >= 3 && kCode >= minCode) {
+            counts[first] -= 3;
+            current.push({ type: 'koutsu', indices: [first, first, first] });
+            extract(rem - 1, kCode, current);
+            current.pop();
+            counts[first] += 3;
+        }
+        const sCode = first * 2 + 1;
+        if (first < 27 && (first % 9) <= 6 && counts[first + 1] > 0 && counts[first + 2] > 0 && sCode >= minCode) {
+            counts[first]--; counts[first + 1]--; counts[first + 2]--;
+            current.push({ type: 'shuntsu', indices: [first, first + 1, first + 2] });
+            extract(rem - 1, sCode, current);
+            current.pop();
+            counts[first]++; counts[first + 1]++; counts[first + 2]++;
+        }
+    }
+
+    const allDecomps = [];
+    for (let p = 0; p < 34; p++) {
+        if (counts[p] >= 2) {
+            counts[p] -= 2;
+            results.length = 0;
+            extract(targetSets, 0, []);
+            for (const sets of results) {
+                allDecomps.push({ pairIdx: p, sets });
+            }
+            counts[p] += 2;
+        }
+    }
+    return allDecomps;
+}
+
+function isWinningStructureClient(handTiles, melds = []) {
+    const expected = 14 - (melds ? melds.length : 0) * 3;
+    if (!handTiles || handTiles.length !== expected) return false;
+    const counts = new Array(34).fill(0);
+    for (const t of handTiles) {
+        const idx = tileToIdx(t);
+        if (idx < 0) return false;
+        counts[idx]++;
+    }
+    if (!melds || melds.length === 0) {
+        if (isKokushiCounts(counts) || isChitoitsuCounts(counts)) return true;
+    }
+    return findDecompositionsClient(counts, 4 - (melds ? melds.length : 0)).length > 0;
+}
+
+function getWinningTileIndicesClient(hand13, melds = []) {
+    const expected = 13 - (melds ? melds.length : 0) * 3;
+    if (!hand13 || hand13.length !== expected) return [];
+    const counts = new Array(34).fill(0);
+    for (const t of hand13) {
+        const idx = tileToIdx(t);
+        if (idx < 0) return [];
+        counts[idx]++;
+    }
+    for (const m of (melds || [])) {
+        for (const t of (m.tiles || [])) {
+            const idx = tileToIdx(t);
+            if (idx >= 0) counts[idx]++;
+        }
+    }
+
+    const waits = [];
+    for (let idx = 0; idx < 34; idx++) {
+        if (counts[idx] >= 4) continue;
+        const dummy = idx < 9
+            ? { suit: 'man', rank: idx + 1 }
+            : idx < 18
+                ? { suit: 'pin', rank: idx - 8 }
+                : idx < 27
+                    ? { suit: 'sou', rank: idx - 17 }
+                    : { suit: 'honor', honorType: CLIENT_HONORS[idx - 27] };
+        if (isWinningStructureClient([...hand13, dummy], melds)) {
+            waits.push(idx);
+        }
+    }
+    return waits;
+}
+
+function getRiichiDiscardCandidates(hand14, melds = []) {
+    if (!hand14 || (melds && melds.some(m => m.type !== 'ankan'))) return [];
+    const expected = 14 - (melds ? melds.length : 0) * 3;
+    if (hand14.length !== expected) return [];
+    const candidates = [];
+    for (let i = 0; i < hand14.length; i++) {
+        const rem = [...hand14.slice(0, i), ...hand14.slice(i + 1)];
+        if (getWinningTileIndicesClient(rem, melds).length > 0) {
+            candidates.push(hand14[i]);
+        }
+    }
+    return candidates;
+}
+
+function hasAnyYakuClient(hand14, melds, winTile, isTsumo, player, state) {
+    const expected = 14 - (melds ? melds.length : 0) * 3;
+    if (!hand14 || hand14.length !== expected) return false;
+    const isMenzen = (melds || []).every(m => m.type === 'ankan');
+
+    const counts = new Array(34).fill(0);
+    for (const t of hand14) {
+        const idx = tileToIdx(t);
+        if (idx < 0) return false;
+        counts[idx]++;
+    }
+
+    if (isMenzen && (melds || []).length === 0) {
+        if (isKokushiCounts(counts) || isChitoitsuCounts(counts)) return true;
+    }
+
+    const decomps = findDecompositionsClient(counts, 4 - (melds ? melds.length : 0));
+    if (decomps.length === 0) return false;
+
+    // 状況役・門前ツモ・リーチ
+    if (player?.riichi?.declared) return true;
+    if (isTsumo && isMenzen) return true;
+    if (state?.lastDrawWasRinshan && isTsumo) return true;
+    if (state?.wall?.length === 0 && state?.deadWall?.length > 0) return true;
+
+    const allTiles = [...hand14];
+    for (const m of (melds || [])) allTiles.push(...(m.tiles || []));
+    const allIndices = allTiles.map(tileToIdx);
+
+    // 断么九
+    if (allIndices.every(i => !CLIENT_YAOCHUU.has(i))) return true;
+
+    // 混一色・清一色・字一色・混老頭・清老頭・緑一色
+    const suits = new Set(allIndices.filter(i => i < 27).map(i => Math.floor(i / 9)));
+    if (suits.size <= 1) return true;
+    if (allIndices.every(i => CLIENT_YAOCHUU.has(i))) return true;
+
+    const roundWindIdx = 27 + CLIENT_HONORS.indexOf(state?.round?.wind || 'east');
+    const seatWindIdx = 27 + CLIENT_HONORS.indexOf(player?.seat || 'east');
+    const winIdx = tileToIdx(winTile || hand14[hand14.length - 1]);
+
+    const calledSets = (melds || []).map(m => ({
+        type: m.type === 'chi' ? 'shuntsu' : 'koutsu',
+        indices: (m.tiles || []).map(tileToIdx),
+        isConcealed: m.type === 'ankan'
+    }));
+
+    for (const d of decomps) {
+        const allSets = [...d.sets.map(s => ({ ...s, isConcealed: true })), ...calledSets];
+        const shuntsu = allSets.filter(s => s.type === 'shuntsu');
+        const koutsu = allSets.filter(s => s.type === 'koutsu');
+
+        // 役牌 (場風・自風・白・發・中)
+        if (koutsu.some(k => {
+            const idx = k.indices[0];
+            return idx === roundWindIdx || idx === seatWindIdx || (idx >= 31 && idx <= 33);
+        })) return true;
+
+        // 対々和
+        if (koutsu.length === 4) return true;
+
+        // 平和 (門前・4順子・非役牌雀頭・両面待ち)
+        if (isMenzen && calledSets.length === 0 && shuntsu.length === 4) {
+            const isValPair = d.pairIdx === roundWindIdx || d.pairIdx === seatWindIdx || (d.pairIdx >= 31 && d.pairIdx <= 33);
+            if (!isValPair) {
+                const hasRyanmen = d.sets.some(s => {
+                    if (!s.indices.includes(winIdx)) return false;
+                    const [a, b, c] = s.indices;
+                    if (winIdx === b) return false;
+                    if ((a % 9 === 0 && winIdx === c) || (a % 9 === 6 && winIdx === a)) return false;
+                    return true;
+                });
+                if (hasRyanmen) return true;
+            }
+        }
+
+        // 一盃口・二盃口
+        if (isMenzen && shuntsu.length >= 2) {
+            const starts = shuntsu.map(s => s.indices[0]).sort((a, b) => a - b);
+            for (let i = 0; i < starts.length - 1; i++) {
+                if (starts[i] === starts[i + 1]) return true;
+            }
+        }
+
+        // 三色同順・一気通貫
+        if (shuntsu.length >= 3) {
+            const starts = new Set(shuntsu.map(s => s.indices[0]));
+            for (let r = 0; r <= 6; r++) {
+                if (starts.has(r) && starts.has(r + 9) && starts.has(r + 18)) return true;
+            }
+            for (const b of [0, 9, 18]) {
+                if (starts.has(b) && starts.has(b + 3) && starts.has(b + 6)) return true;
+            }
+        }
+
+        // 三暗刻・三色同刻
+        if (koutsu.length >= 3) {
+            const tSet = new Set(koutsu.map(k => k.indices[0]));
+            for (let r = 0; r < 9; r++) {
+                if (tSet.has(r) && tSet.has(r + 9) && tSet.has(r + 18)) return true;
+            }
+            const ankou = koutsu.filter(k => k.isConcealed && (isTsumo || k.indices[0] !== winIdx)).length;
+            if (ankou >= 3) return true;
+        }
+
+        // チャンタ・純チャン
+        if (shuntsu.length >= 1 && CLIENT_YAOCHUU.has(d.pairIdx) && allSets.every(s => s.indices.some(i => CLIENT_YAOCHUU.has(i)))) {
+            return true;
+        }
+    }
     return false;
+}
+
+function canTsumoWinClient(player, state) {
+    if (!player || !canPlayerDiscard(player)) return false;
+    const winTile = player.hand[player.hand.length - 1];
+    return hasAnyYakuClient(player.hand, player.melds, winTile, true, player, state);
+}
+
+function canRonWinClient(player, targetTile, state) {
+    if (!player || !targetTile) return false;
+    if (player.furiten) return false;
+    const waits = getWinningTileIndicesClient(player.hand, player.melds);
+    const targetIdx = tileToIdx(targetTile);
+    if (!waits.includes(targetIdx)) return false;
+
+    // 捨牌フリテンチェック
+    const discardIndices = new Set((player.discards || []).map(tileToIdx));
+    if (waits.some(w => discardIndices.has(w))) return false;
+
+    return hasAnyYakuClient([...player.hand, targetTile], player.melds, targetTile, false, player, state);
 }
 
 function getAnkanCandidates(hand) {
@@ -672,60 +994,116 @@ function renderActionPanel(state) {
         return b;
     };
 
-    switch (phase) {
-        case 'waiting':
-            createBtn('局開始', 'act-tsumo', () => sendAction({ type: 'ROUND_START' }));
-            break;
+    if (App.waitingCountdownTimer) {
+        clearInterval(App.waitingCountdownTimer);
+        App.waitingCountdownTimer = null;
+    }
 
-        case 'dealing':
-            createBtn('配牌完了', 'act-tsumo', () => sendAction({ type: 'DEAL_COMPLETE' }));
+    switch (phase) {
+        case 'waiting': {
+            const players = state?.players || [];
+            const humanCount = players.filter(p => p.isOccupied && !p.isNpc).length;
+            const infoSpan = document.createElement('span');
+            infoSpan.className = 'waiting-player-status';
+
+            const updateCountdownText = () => {
+                if (state?.autoStartDeadline) {
+                    const remSec = Math.max(0, Math.ceil((state.autoStartDeadline - Date.now()) / 1000));
+                    infoSpan.textContent = `対局相手を待機中 (${humanCount}/4人) — あと ${remSec}秒 でNPCを補充して自動開始`;
+                } else {
+                    infoSpan.textContent = `対局相手を待機中 (${humanCount}/4人) — 4人揃うか1分経過で自動開始`;
+                }
+            };
+            updateCountdownText();
+            dom.actionBtns.appendChild(infoSpan);
+
+            if (state?.autoStartDeadline) {
+                App.waitingCountdownTimer = setInterval(updateCountdownText, 500);
+            }
             break;
+        }
+
+        case 'dealing': {
+            const infoSpan = document.createElement('span');
+            infoSpan.className = 'waiting-player-status';
+            infoSpan.textContent = '自動配牌中...';
+            dom.actionBtns.appendChild(infoSpan);
+            break;
+        }
 
         case 'playing': {
             const currentPlayer = state.players?.find(p => p.seat === current);
-            const curHandSize = currentPlayer?.hand?.length ?? 0;
             const lastTile = state.lastDiscard;
             const discarder = getDiscarder(state);
             const prevSeat = WIND_ORDER[(WIND_ORDER.indexOf(App.mySeat) + 3) % 4];
 
-            // 1. 他家の直前打牌に対する鳴き（ポン・チー・カン）の判定
-            let meldActionAvailable = false;
-            if (lastTile && discarder && discarder !== App.mySeat && !App.noMeld && !myPlayer?.riichi?.declared) {
-                const ponAvailable = canPon(myPlayer?.hand, lastTile);
-                const chiAvailable = (discarder === prevSeat) && canChi(myPlayer?.hand, lastTile);
-                const kanAvailable = canDaiminkan(myPlayer?.hand, lastTile);
+            // 新しい打牌が出たらパス状態を解除
+            if (!lastTile || (App.passedDiscardId && App.passedDiscardId !== lastTile.id)) {
+                if (!lastTile) App.passedDiscardId = null;
+            }
+            const hasPassedThisTile = Boolean(lastTile && App.passedDiscardId === lastTile.id);
 
-                if (ponAvailable) {
-                    meldActionAvailable = true;
-                    createBtn('ポン', 'act-call', () => {
-                        sendAction({ type: 'PON', player: App.mySeat, tile: lastTile });
-                    }, `${MahjongTiles.getTileTitle(lastTile)} をポン`);
+            // 1. 他家の直前打牌に対する鳴き（ポン・チー・カン）およびロンの判定
+            let callOrRonAvailable = false;
+            if (lastTile && discarder && discarder !== App.mySeat && !hasPassedThisTile) {
+                if (!App.noMeld && !myPlayer?.riichi?.declared) {
+                    const ponAvailable = canPon(myPlayer?.hand, lastTile);
+                    const chiCombos = (discarder === prevSeat) ? getChiCombinations(myPlayer?.hand, lastTile) : [];
+                    const kanAvailable = canDaiminkan(myPlayer?.hand, lastTile);
+
+                    if (ponAvailable) {
+                        callOrRonAvailable = true;
+                        createBtn('ポン', 'act-call', () => {
+                            sendAction({ type: 'PON', player: App.mySeat, tile: lastTile });
+                        }, `${MahjongTiles.getTileTitle(lastTile)} をポン`);
+                    }
+
+                    if (chiCombos.length === 1) {
+                        callOrRonAvailable = true;
+                        createBtn('チー', 'act-call', () => {
+                            sendAction({ type: 'CHI', player: App.mySeat, tile: lastTile, meldTiles: chiCombos[0] });
+                        }, `${MahjongTiles.getTileTitle(lastTile)} をチー`);
+                    } else if (chiCombos.length > 1) {
+                        callOrRonAvailable = true;
+                        chiCombos.forEach(pair => {
+                            const label = `チー (${MahjongTiles.getTileTitle(pair[0])}・${MahjongTiles.getTileTitle(pair[1])})`;
+                            createBtn(label, 'act-call', () => {
+                                sendAction({ type: 'CHI', player: App.mySeat, tile: lastTile, meldTiles: pair });
+                            }, `${MahjongTiles.getTileTitle(lastTile)} を ${label} で鳴く`);
+                        });
+                    }
+
+                    if (kanAvailable) {
+                        callOrRonAvailable = true;
+                        createBtn('カン (大明槓)', 'act-call', () => {
+                            sendAction({ type: 'KAN', player: App.mySeat, tile: lastTile });
+                        }, `${MahjongTiles.getTileTitle(lastTile)} を大明槓`);
+                    }
                 }
 
-                if (chiAvailable) {
-                    meldActionAvailable = true;
-                    createBtn('チー', 'act-call', () => {
-                        sendAction({ type: 'CHI', player: App.mySeat, tile: lastTile });
-                    }, `${MahjongTiles.getTileTitle(lastTile)} をチー`);
+                // ロンボタン (実手牌でロン和了可能かつ非フリテン時のみ表示！)
+                if (canRonWinClient(myPlayer, lastTile, state)) {
+                    callOrRonAvailable = true;
+                    createBtn('ロン', 'act-ron', () => {
+                        sendAction({ type: 'RON_DECLARE', player: App.mySeat, tile: lastTile });
+                    }, `${MahjongTiles.getTileTitle(lastTile)} でロン宣言`);
                 }
 
-                if (kanAvailable) {
-                    meldActionAvailable = true;
-                    createBtn('カン (大明槓)', 'act-call', () => {
-                        sendAction({ type: 'KAN', player: App.mySeat, tile: lastTile });
-                    }, `${MahjongTiles.getTileTitle(lastTile)} を大明槓`);
-                }
-
-                // ロンボタン
-                createBtn('ロン', 'act-ron', () => {
-                    sendAction({ type: 'RON_DECLARE', player: App.mySeat, tile: lastTile });
-                }, `${MahjongTiles.getTileTitle(lastTile)} でロン宣言`);
-
-                if (meldActionAvailable) {
+                if (callOrRonAvailable) {
                     createBtn('パス', 'act-pass', () => {
-                        log('action', '鳴きをパス');
-                        sendMsg({ type: 'get_state' });
-                    }, '鳴かずにスルー');
+                        App.passedDiscardId = lastTile.id;
+                        log('action', '鳴き/ロンをパス');
+                        sendMsg({ type: 'pass_call' });
+                        if (isMyTurn && isPlayerWaitingDraw(myPlayer)) {
+                            sendAction({ type: 'DRAW_TILE', player: App.mySeat });
+                        } else {
+                            renderActionPanel(state);
+                        }
+                    }, 'スルーします');
+                } else if (App.noMeld && lastTile && App.passedDiscardId !== lastTile.id) {
+                    // 「鳴きなし」ONでロンもできない場合はサーバーへ自動パス通知を送ってNPCを待たせない
+                    App.passedDiscardId = lastTile.id;
+                    sendMsg({ type: 'pass_call' });
                 }
             }
 
@@ -752,24 +1130,28 @@ function renderActionPanel(state) {
                     createBtn('ツモ (牌を引く)', 'act-tsumo',
                         () => sendAction({ type: 'DRAW_TILE', player: App.mySeat }),
                         '山から牌を1枚引きます');
-                } else {
-                    // ソロ支援: 他家のツモ進行ボタン
-                    createBtn(`${WIND_KANJI[current]} ツモ`, 'act-pass',
-                        () => sendAction({ type: 'DRAW_TILE', player: current }));
                 }
             }
 
             // 4. ツモ済みまたは鳴き後 → 打牌待ち (門前14枚、1鳴き11枚、2鳴き8枚...)
             if (currentPlayer && canPlayerDiscard(currentPlayer)) {
                 if (isMyTurn) {
-                    // ツモ和了ボタン
-                    createBtn('ツモ', 'act-tsumo', () => {
-                        const winTile = myPlayer.hand[handSize - 1];
-                        sendAction({ type: 'TSUMO_DECLARE', player: App.mySeat, tile: winTile });
-                    }, 'ツモ和了を宣言します');
+                    // ツモ和了ボタン (和了可能時のみ表示！)
+                    if (canTsumoWinClient(myPlayer, state)) {
+                        createBtn('ツモ', 'act-tsumo', () => {
+                            const winTile = myPlayer.hand[handSize - 1];
+                            sendAction({ type: 'TSUMO_DECLARE', player: App.mySeat, tile: winTile });
+                        }, 'ツモ和了を宣言します');
+                    }
 
-                    // リーチ宣言ボタン (門前時のみ)
-                    if (!myPlayer?.riichi?.declared && (!myPlayer?.melds || myPlayer.melds.length === 0)) {
+                    // リーチ宣言ボタン (門前・未リーチ・1000点以上・聴牌になる打牌候補がある時のみ表示！)
+                    const canRiichi =
+                        !myPlayer?.riichi?.declared &&
+                        (myPlayer?.melds || []).every(m => m.type === 'ankan') &&
+                        (myPlayer?.score ?? 25000) >= 1000 &&
+                        getRiichiDiscardCandidates(myPlayer?.hand, myPlayer?.melds).length > 0;
+
+                    if (canRiichi) {
                         createBtn('立直', 'act-riichi',
                             () => sendAction({ type: 'RIICHI_DECLARE', player: App.mySeat }),
                             '立直を宣言します');
@@ -777,25 +1159,13 @@ function renderActionPanel(state) {
 
                     // ツモ切りボタン (手牌の最後の牌を打牌)
                     if (myPlayer?.hand?.length) {
-                        const lastTile = myPlayer.hand[myPlayer.hand.length - 1];
+                        const lastInHand = myPlayer.hand[myPlayer.hand.length - 1];
                         createBtn('ツモ切り', 'act-tsumogiri', () => {
-                            sendAction({ type: 'DISCARD', player: App.mySeat, tile: lastTile });
-                        }, `${MahjongTiles.getTileTitle(lastTile)} を打牌`);
+                            sendAction({ type: 'DISCARD', player: App.mySeat, tile: lastInHand });
+                        }, `${MahjongTiles.getTileTitle(lastInHand)} を打牌`);
                     }
-                } else {
-                    // ソロ支援: 他家の打牌進行
-                    createBtn(`${WIND_KANJI[current]} 打牌`, 'act-pass', () => {
-                        const cPlayer = state.players?.find(p => p.seat === current);
-                        if (!cPlayer?.hand?.length) return;
-                        const tile = cPlayer.hand[cPlayer.hand.length - 1];
-                        sendAction({ type: 'DISCARD', player: current, tile });
-                    });
                 }
             }
-
-            // 流局ボタン
-            createBtn('流局', 'act-pass',
-                () => sendAction({ type: 'EXHAUSTIVE_DRAW', drawType: 'wall_exhausted' }));
             break;
         }
 
@@ -824,6 +1194,22 @@ function renderActionPanel(state) {
             createBtn('局終了へ', 'act-tsumo',
                 () => sendAction({ type: 'ROUND_END' }));
             break;
+
+        case 'game_end': {
+            const modeLabel = state?.gameLength === 'east' ? '東風戦' : '東南戦';
+            const ranked = [...(state?.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
+            const rankStr = ranked
+                .map((p, i) => `${i + 1}位:${p.id}(${(p.score || 0).toLocaleString()}点)`)
+                .join(' / ');
+            const infoSpan = document.createElement('span');
+            infoSpan.className = 'waiting-player-status';
+            infoSpan.textContent = `🏆 ${modeLabel}終了 — ${rankStr}`;
+            dom.actionBtns.appendChild(infoSpan);
+
+            createBtn('新しい対局へ', 'act-tsumo',
+                () => sendAction({ type: 'ROUND_END' }));
+            break;
+        }
     }
 
     // 状態更新ボタン
@@ -900,6 +1286,24 @@ document.addEventListener('click', e => {
     }
 
     if (tile) {
+        // リーチ後の打牌制限チェック
+        if (myPlayer.riichi?.declared) {
+            const declIdx = myPlayer.riichi.discardIndex ?? -1;
+            const curDiscards = myPlayer.discards ? myPlayer.discards.length : 0;
+            if (curDiscards > declIdx) {
+                const drawnTile = myPlayer.hand[myPlayer.hand.length - 1];
+                if (drawnTile && tile.id !== drawnTile.id) {
+                    log('error', 'リーチ後はツモ牌のみ打牌できます');
+                    return;
+                }
+            } else if (curDiscards === declIdx) {
+                const candidates = getRiichiDiscardCandidates(myPlayer.hand, myPlayer.melds);
+                if (candidates.length > 0 && !candidates.some(c => c.id === tile.id)) {
+                    log('error', 'その牌を切ると聴牌にならないため立直宣言牌として選べません');
+                    return;
+                }
+            }
+        }
         log('action', `打牌: ${MahjongTiles.getTileTitle(tile)}`);
         sendAction({ type: 'DISCARD', player: App.mySeat, tile });
     }
@@ -955,6 +1359,61 @@ dom.toggleAutoSort.addEventListener('change', e => {
 // 和了・精算モーダル
 // ============================================================
 
+const YAKU_NAMES_JA = {
+    riichi: '立直 (リーチ)',
+    ippatsu: '一発',
+    tsumo: '門前清自摸和',
+    tanyao: '断么九 (タンヤオ)',
+    pinfu: '平和 (ピンフ)',
+    iipeikou: '一盃口 (イーペーコー)',
+    bakaze: '役牌: 場風牌',
+    jikaze: '役牌: 自風牌',
+    haku: '役牌: 白',
+    hatsu: '役牌: 發',
+    chun: '役牌: 中',
+    rinshan: '嶺上開花',
+    chankan: '槍槓',
+    haitei: '海底摸月',
+    houtei: '河底撈魚',
+    double_riichi: 'ダブル立直',
+    sanshoku_doujun: '三色同順',
+    ittsu: '一気通貫',
+    chanta: '混全帯么九 (チャンタ)',
+    chitoitsu: '七対子 (チートイツ)',
+    toitoi: '対々和 (トイトイ)',
+    sanankou: '三暗刻',
+    sanshoku_doukou: '三色同刻',
+    sankantsu: '三槓子',
+    honroutou: '混老頭',
+    shousangen: '小三元',
+    honitsu: '混一色 (ホンイツ)',
+    junchanta: '純全帯么九 (ジュンチャン)',
+    ryanpeikou: '二盃口 (リャンペーコー)',
+    chinitsu: '清一色 (チンイツ)',
+    kokushi: '国士無双',
+    suuankou: '四暗刻',
+    daisangen: '大三元',
+    shousuushi: '小四喜',
+    daisuushi: '大四喜',
+    tsuuiisou: '字一色',
+    chinroutou: '清老頭',
+    ryuuiisou: '緑一色',
+    chuuren: '九蓮宝燈',
+    suukantsu: '四槓子',
+    tenhou: '天和',
+    chiihou: '地和'
+};
+
+const LIMIT_NAMES_JA = {
+    mangan: '満貫',
+    haneman: '跳満',
+    baiman: '倍満',
+    sanbaiman: '三倍満',
+    yakuman: '役満',
+    double_yakuman: 'ダブル役満',
+    triple_yakuman: 'トリプル役満'
+};
+
 function showPaymentResult(payments) {
     if (!payments || !payments.length) return;
     const p = payments[0]; // 最初の和了者
@@ -964,12 +1423,22 @@ function showPaymentResult(payments) {
     dom.resultWinnerTitle.textContent = `${WIND_KANJI[winnerSeat]}家 和了`;
     dom.resultTypeTag.textContent = isTsumo ? 'ツモ和了' : `ロン (${WIND_KANJI[p.fromPlayer] ?? p.fromPlayer}家から)`;
 
-    // 和了手牌の表示
+    // 和了手牌の表示 (純手牌 + ロン時の和了牌 + 副露面子)
     dom.resultHandTiles.innerHTML = '';
     const winnerPlayer = App.gameState?.players?.find(pl => pl.seat === winnerSeat);
     if (winnerPlayer?.hand) {
         winnerPlayer.hand.forEach(t => {
             dom.resultHandTiles.insertAdjacentHTML('beforeend', MahjongTiles.renderTileHtml(t, 'md'));
+        });
+        if (!isTsumo && p.winningTile && !winnerPlayer.hand.some(t => t.id === p.winningTile.id)) {
+            dom.resultHandTiles.insertAdjacentHTML('beforeend', MahjongTiles.renderTileHtml(p.winningTile, 'md', 'is-dora'));
+        }
+    }
+    if (winnerPlayer?.melds?.length) {
+        winnerPlayer.melds.forEach(m => {
+            (m.tiles || []).forEach(t => {
+                dom.resultHandTiles.insertAdjacentHTML('beforeend', MahjongTiles.renderTileHtml(t, 'sm'));
+            });
         });
     }
 
@@ -979,18 +1448,74 @@ function showPaymentResult(payments) {
         dom.resultDoraIndicators.insertAdjacentHTML('beforeend', MahjongTiles.renderTileHtml(t, 'sm'));
     });
 
-    // 役一覧の構築 (シミュレーション役表示)
-    dom.resultYakuList.innerHTML = `
-        <div class="yaku-item"><span>立直 (リーチ)</span><span class="yaku-han">1飜</span></div>
-        <div class="yaku-item"><span>門前清自摸和</span><span class="yaku-han">1飜</span></div>
-        <div class="yaku-item"><span>平和 (ピンフ)</span><span class="yaku-han">1飜</span></div>
-        <div class="yaku-item"><span>ドラ</span><span class="yaku-han">1飜</span></div>
-    `;
+    // 裏ドラ表示牌 (リーチ和了時は表向き公開、非リーチ時は伏せ牌)
+    if (dom.resultUraDoraIndicators) {
+        dom.resultUraDoraIndicators.innerHTML = '';
+        const isRiichiWinner = Boolean(winnerPlayer?.riichi?.declared);
+        const uraList = App.gameState?.uraDoraIndicators || [];
+        if (isRiichiWinner && uraList.length > 0) {
+            uraList.forEach(t => {
+                dom.resultUraDoraIndicators.insertAdjacentHTML('beforeend', MahjongTiles.renderTileHtml(t, 'sm'));
+            });
+        } else {
+            dom.resultUraDoraIndicators.insertAdjacentHTML('beforeend', MahjongTiles.renderTileHtml(null, 'sm'));
+        }
+    }
 
-    dom.resultFuHan.textContent = '30符 4飜';
-    dom.resultPointTitle.textContent = '満貫';
-    dom.resultPoints.textContent = isTsumo ? '8,000点' : '8,000点';
-    dom.resultPaymentSplit.textContent = isTsumo ? '(2,000・4,000)' : `(${p.honba ? p.honba + '本場加算' : ''})`;
+    // 役一覧の構築 (実手牌評価データから動的生成)
+    const handEval = p.handEvaluation;
+    const scoreCalc = p.scoreCalculation;
+    if (handEval && Array.isArray(handEval.yaku) && handEval.yaku.length > 0) {
+        const yakuRows = handEval.yaku.map(y => {
+            const name = YAKU_NAMES_JA[y.type] || y.type;
+            const hanText = y.isYakuman ? '役満' : `${y.han}飜`;
+            return `<div class="yaku-item"><span>${escapeHtml(name)}</span><span class="yaku-han">${hanText}</span></div>`;
+        });
+        if (!handEval.yakuman) {
+            if (handEval.dora > 0) {
+                yakuRows.push(`<div class="yaku-item"><span>ドラ</span><span class="yaku-han">${handEval.dora}飜</span></div>`);
+            }
+            if (handEval.akaDora > 0) {
+                yakuRows.push(`<div class="yaku-item"><span>赤ドラ</span><span class="yaku-han">${handEval.akaDora}飜</span></div>`);
+            }
+            if (handEval.uraDora > 0) {
+                yakuRows.push(`<div class="yaku-item"><span>裏ドラ</span><span class="yaku-han">${handEval.uraDora}飜</span></div>`);
+            }
+        }
+        dom.resultYakuList.innerHTML = yakuRows.join('');
+    } else {
+        dom.resultYakuList.innerHTML = `
+            <div class="yaku-item"><span>和了</span><span class="yaku-han">1飜</span></div>
+        `;
+    }
+
+    if (scoreCalc) {
+        dom.resultFuHan.textContent = handEval?.yakuman
+            ? '役満'
+            : `${scoreCalc.fu}符 ${scoreCalc.han}飜`;
+        dom.resultPointTitle.textContent = scoreCalc.limitName
+            ? (LIMIT_NAMES_JA[scoreCalc.limitName] || '')
+            : '';
+        dom.resultPoints.textContent = `${scoreCalc.score.toLocaleString()}点`;
+
+        if (isTsumo) {
+            if (scoreCalc.dealerScore) {
+                dom.resultPaymentSplit.textContent = `(${scoreCalc.dealerScore.tsumo.toLocaleString()}点オール)`;
+            } else if (scoreCalc.nonDealerScore) {
+                dom.resultPaymentSplit.textContent = `(${scoreCalc.nonDealerScore.tsumo.toLocaleString()}・${scoreCalc.nonDealerScore.tsumoFromDealer.toLocaleString()})`;
+            } else {
+                dom.resultPaymentSplit.textContent = '';
+            }
+        } else {
+            dom.resultPaymentSplit.textContent = p.honba ? `(${p.honba}本場加算)` : '';
+        }
+    } else {
+        const wonAmount = p.payments?.[winnerSeat] ?? 0;
+        dom.resultFuHan.textContent = '';
+        dom.resultPointTitle.textContent = '';
+        dom.resultPoints.textContent = `${wonAmount.toLocaleString()}点`;
+        dom.resultPaymentSplit.textContent = '';
+    }
 
     dom.resultModal.classList.remove('hidden');
 }
@@ -1068,6 +1593,16 @@ function escapeHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// 対局形式ラジオボタンの変更連動
+document.querySelectorAll('input[name="game-length"]').forEach(radio => {
+    radio.addEventListener('change', e => {
+        const pill = $('preview-length-pill');
+        if (pill) {
+            pill.textContent = e.target.value === 'east' ? '東風戦' : '東南戦';
+        }
+    });
+});
+
 // 接続フォーム送信
 dom.connectForm.addEventListener('submit', e => {
     e.preventDefault();
@@ -1075,8 +1610,10 @@ dom.connectForm.addEventListener('submit', e => {
     const url = dom.serverUrl.value.trim();
     const roomId = dom.roomId.value.trim();
     const playerId = dom.playerId.value.trim();
+    const selectedLengthEl = document.querySelector('input[name="game-length"]:checked');
+    const gameLength = selectedLengthEl ? selectedLengthEl.value : 'south';
     if (url && roomId && playerId) {
-        connect(url, roomId, playerId);
+        connect(url, roomId, playerId, gameLength);
     }
 });
 

@@ -1,6 +1,7 @@
-import { GameState, GamePhase, Wind, DrawType } from '../types/game-state.js';
+import { GameState, GamePhase, Wind, DrawType, PlayerState, RoundWind } from '../types/game-state.js';
 import { RuleConfig } from '../config/rule-config.js';
 import { TileInstance } from '../types/tiles.js';
+import { HandEvaluator } from './hand-evaluator.js';
 
 /**
  * Round state machine events
@@ -10,7 +11,7 @@ export type RoundEvent =
   | { type: 'DEAL_COMPLETE' }
   | { type: 'DRAW_TILE'; player: Wind }
   | { type: 'DISCARD'; player: Wind; tile: TileInstance }
-  | { type: 'CHI'; player: Wind; tile: TileInstance }
+  | { type: 'CHI'; player: Wind; tile: TileInstance; meldTiles?: TileInstance[] }
   | { type: 'PON'; player: Wind; tile: TileInstance }
   | { type: 'KAN'; player: Wind; tile: TileInstance }
   | { type: 'RIICHI_DECLARE'; player: Wind }
@@ -59,11 +60,44 @@ export interface RoundStateMachineOptions {
  * Manages the flow of a single round with all branching points
  */
 export class RoundStateMachine {
+  private handEvaluator = new HandEvaluator();
+  private lastWinners: Wind[] = [];
+  private lastRoundWasDraw = false;
+  private calledFromSeats = new Set<Wind>();
+  private anyCallInRound = false;
+  private allDiscardsBySeat: Record<Wind, TileInstance[]> = {
+    east: [],
+    south: [],
+    west: [],
+    north: []
+  };
+
   constructor(
     private rules: RuleConfig,
     private state: GameState,
     private options?: RoundStateMachineOptions
   ) { }
+
+  /**
+   * Reset round tracking flags
+   */
+  resetRoundTracking(): void {
+    this.lastWinners = [];
+    this.lastRoundWasDraw = false;
+    this.calledFromSeats.clear();
+    this.anyCallInRound = false;
+    this.state.lastDrawWasRinshan = false;
+    this.allDiscardsBySeat = { east: [], south: [], west: [], north: [] };
+  }
+
+  /**
+   * Get all discards thrown by a seat (including tiles later called by other players)
+   */
+  getAllDiscardsForSeat(seat: Wind): TileInstance[] {
+    const player = this.state.players.find(p => p.seat === seat);
+    const tracked = this.allDiscardsBySeat[seat] ?? [];
+    return tracked.length >= (player?.discards.length ?? 0) ? tracked : (player?.discards ?? []);
+  }
 
   /**
    * Set or update custom initial wall (e.g. for replays or testing)
@@ -112,6 +146,9 @@ export class RoundStateMachine {
 
       case 'round_end':
         return this.handleRoundEnd(event, events);
+
+      case 'game_end':
+        return this.handleGameEnd(event, events);
 
       default:
         throw new Error(`Unknown phase: ${this.state.phase}`);
@@ -184,6 +221,8 @@ export class RoundStateMachine {
 
         if (this.state.wall.length === 0) {
           // 山が尽きた → 流局
+          this.lastWinners = [];
+          this.lastRoundWasDraw = true;
           events.push('Wall exhausted during draw');
           return {
             newState: this.state,
@@ -198,6 +237,7 @@ export class RoundStateMachine {
         player.hand.push(drawnTile);
         this.state.currentPlayer = event.player;
         this.state.lastDiscard = null;
+        this.state.lastDrawWasRinshan = false;
         events.push(`${event.player} drew a tile: ${drawnTile.id} (wall: ${this.state.wall.length} left)`);
 
         return { newState: this.state, newPhase: 'playing', events };
@@ -207,12 +247,44 @@ export class RoundStateMachine {
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
 
+        // リーチ後の打牌制約チェック
+        if (player.riichi.declared && player.hand.length > 0) {
+          const declIdx = player.riichi.discardIndex ?? 0;
+          if (player.discards.length > declIdx) {
+            // 既にリーチ宣言牌を切った後の次巡以降 → ツモ牌（手牌末尾）のみ打牌可能
+            const drawnTile = player.hand[player.hand.length - 1];
+            const hasExactIdInHand = player.hand.some(t => t.id === event.tile.id);
+            const isDrawnTile = hasExactIdInHand
+              ? drawnTile.id === event.tile.id
+              : (drawnTile.suit === event.tile.suit &&
+                drawnTile.rank === event.tile.rank &&
+                drawnTile.honorType === event.tile.honorType);
+            if (!isDrawnTile) {
+              throw new Error('リーチ後はツモ牌以外を打牌できません');
+            }
+          } else if (player.discards.length === declIdx && player.hand.length === 14 - player.melds.length * 3) {
+            // リーチ宣言牌の打牌 → 切った後にテンパイを維持する牌か検証
+            const candidates = this.handEvaluator.getRiichiDiscardCandidates(player.hand, player.melds);
+            if (candidates.length > 0) {
+              const isValidDecl = candidates.some(
+                c => c.id === event.tile.id ||
+                  (c.suit === event.tile.suit && c.rank === event.tile.rank && c.honorType === event.tile.honorType)
+              );
+              if (!isValidDecl) {
+                throw new Error('この牌を切ると聴牌にならないため立直打牌できません');
+              }
+            }
+          }
+        }
+
         // 手牌から指定牌を除去 (テストやモック手牌の場合はそのまま捨牌に追加)
+        let actualDiscarded: TileInstance = event.tile;
         const tileIdx = player.hand.findIndex(t => t.id === event.tile.id);
         if (tileIdx !== -1) {
           const [discarded] = player.hand.splice(tileIdx, 1);
           player.discards.push(discarded);
           this.state.lastDiscard = discarded;
+          actualDiscarded = discarded;
         } else {
           const fallbackIdx = player.hand.findIndex(
             t => t.suit === event.tile.suit &&
@@ -223,12 +295,29 @@ export class RoundStateMachine {
             const [discarded] = player.hand.splice(fallbackIdx, 1);
             player.discards.push(discarded);
             this.state.lastDiscard = discarded;
+            actualDiscarded = discarded;
           } else {
             // モック/テスト互換: 手牌に存在しない場合も捨牌に直接登録
             player.discards.push(event.tile);
             this.state.lastDiscard = event.tile;
           }
         }
+        this.allDiscardsBySeat[event.player].push(actualDiscarded);
+        this.state.lastDrawWasRinshan = false;
+
+        // リーチ宣言後の次巡ツモ切りが完了した時点でそのプレイヤーの一発フラグを消去
+        if (
+          player.riichi.declared &&
+          player.riichi.discardIndex !== undefined &&
+          player.riichi.discardIndex !== null &&
+          player.discards.length > player.riichi.discardIndex + 1
+        ) {
+          player.riichi.ippatsu = false;
+        }
+
+        // フリテン状態の更新
+        this.updatePlayerFuriten(player);
+
         events.push(`${event.player} discarded ${event.tile.id}`);
 
         this.state.currentTurn++;
@@ -239,6 +328,8 @@ export class RoundStateMachine {
 
         // 打牌後に山が尽きていたら流局判定
         if (this.isExhaustiveDraw()) {
+          this.lastWinners = [];
+          this.lastRoundWasDraw = true;
           return {
             newState: this.state,
             newPhase: 'draw',
@@ -251,6 +342,8 @@ export class RoundStateMachine {
       }
 
       case 'RON_DECLARE':
+        this.lastWinners = [event.player];
+        this.lastRoundWasDraw = false;
         events.push(`${event.player} declared ron`);
         return {
           newState: this.state,
@@ -260,6 +353,8 @@ export class RoundStateMachine {
         };
 
       case 'TSUMO_DECLARE':
+        this.lastWinners = [event.player];
+        this.lastRoundWasDraw = false;
         events.push(`${event.player} declared tsumo`);
         return {
           newState: this.state,
@@ -315,8 +410,11 @@ export class RoundStateMachine {
         player.melds.push(meld);
 
         // 手番を鳴いたプレイヤーに移動（14枚相当なので打牌待ち）
+        if (fromPlayer) this.calledFromSeats.add(fromPlayer);
+        this.anyCallInRound = true;
         this.state.currentPlayer = event.player;
         this.state.lastDiscard = null;
+        this.state.lastDrawWasRinshan = false;
         this.clearIppatsu();
 
         events.push(`${event.player} called PON on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
@@ -389,8 +487,11 @@ export class RoundStateMachine {
         };
         player.melds.push(meld);
 
+        if (fromPlayer) this.calledFromSeats.add(fromPlayer);
+        this.anyCallInRound = true;
         this.state.currentPlayer = event.player;
         this.state.lastDiscard = null;
+        this.state.lastDrawWasRinshan = false;
         this.clearIppatsu();
 
         events.push(`${event.player} called CHI on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
@@ -460,29 +561,37 @@ export class RoundStateMachine {
             tiles: [...consumed, targetTile],
             calledFrom: fromPlayer
           });
+          if (fromPlayer) this.calledFromSeats.add(fromPlayer);
           events.push(`${event.player} called Daiminkan on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
         } else {
           throw new Error(`Player ${event.player} does not have enough tiles for KAN`);
         }
 
-        // カン後の嶺上牌ツモ
+        this.anyCallInRound = true;
+
+        // カン後の嶺上牌ツモ (王牌の末尾＝嶺上牌側から取得し、ドラ表示牌と混ざらないようにする)
         let rinshanTile: TileInstance | undefined;
         if (this.state.deadWall.length > 0) {
-          rinshanTile = this.state.deadWall.shift();
+          rinshanTile = this.state.deadWall.pop();
         } else if (this.state.wall.length > 0) {
           rinshanTile = this.state.wall.pop();
         }
 
         if (rinshanTile) {
           player.hand.push(rinshanTile);
+          this.state.lastDrawWasRinshan = true;
           events.push(`${event.player} drew rinshan tile: ${rinshanTile.id}`);
         }
 
-        // 新カンドラめくり
+        // 新カンドラ＆カン裏ドラめくり
         if (this.state.deadWall.length > 0) {
           const newDora = this.state.deadWall.shift()!;
           this.state.doraIndicators.push(newDora);
           events.push(`New dora indicator revealed: ${newDora.id}`);
+        }
+        if (this.state.deadWall.length > 0) {
+          const newUraDora = this.state.deadWall.shift()!;
+          this.state.uraDoraIndicators.push(newUraDora);
         }
 
         this.state.currentPlayer = event.player;
@@ -495,18 +604,34 @@ export class RoundStateMachine {
 
       case 'RIICHI_DECLARE': {
         const player = this.state.players.find(p => p.seat === event.player);
-        if (player) {
-          player.riichi.declared = true;
-          player.riichi.turn = this.state.currentTurn;
-          player.riichi.discardIndex = player.discards.length;
-          player.score -= 1000;
-          this.state.riichiSticks++;
-          events.push(`${event.player} declared riichi`);
+        if (!player) throw new Error(`Player ${event.player} not found`);
+        if (player.riichi.declared) {
+          throw new Error('既に立直を宣言しています');
         }
+        if (player.melds.some(m => m.type !== 'ankan')) {
+          throw new Error('副露しているため立直できません');
+        }
+        if (player.hand.length > 0) {
+          const candidates = this.handEvaluator.getRiichiDiscardCandidates(player.hand, player.melds);
+          if (candidates.length === 0) {
+            throw new Error('聴牌していないため立直できません');
+          }
+        }
+
+        player.riichi.declared = true;
+        player.riichi.ippatsu = true;
+        player.riichi.doubleRiichi = (player.discards.length === 0 && !this.anyCallInRound);
+        player.riichi.turn = this.state.currentTurn;
+        player.riichi.discardIndex = player.discards.length;
+        player.score -= 1000;
+        this.state.riichiSticks++;
+        events.push(`${event.player} declared riichi${player.riichi.doubleRiichi ? ' (double riichi)' : ''}`);
         return { newState: this.state, newPhase: 'playing', events };
       }
 
       case 'EXHAUSTIVE_DRAW':
+        this.lastWinners = [];
+        this.lastRoundWasDraw = true;
         events.push('Exhaustive draw');
         return {
           newState: this.state,
@@ -525,6 +650,9 @@ export class RoundStateMachine {
    */
   private handleRonDeclared(event: RoundEvent, events: string[]): TransitionResult {
     if (event.type === 'MULTIPLE_RON_RESOLVED') {
+      if (event.winners.length > 0) {
+        this.lastWinners = [...event.winners];
+      }
       events.push(`Multiple ron resolved: ${event.winners.join(', ')}`);
 
       const branchingPoint: BranchingPoint = event.winners.length > 1
@@ -538,13 +666,37 @@ export class RoundStateMachine {
         branchingPoint
       };
     }
+    if (event.type === 'SCORING_COMPLETE') {
+      events.push('Scoring complete');
+      return {
+        newState: this.state,
+        newPhase: 'round_end',
+        events,
+        branchingPoint: 'DEALER_ROTATION'
+      };
+    }
+    if (event.type === 'ROUND_END') {
+      return this.handleRoundEnd(event, events);
+    }
     throw new Error(`Invalid event ${event.type} in ron_declared phase`);
   }
 
   /**
    * Handle tsumo declared phase
    */
-  private handleTsumoDeclared(_event: RoundEvent, events: string[]): TransitionResult {
+  private handleTsumoDeclared(event: RoundEvent, events: string[]): TransitionResult {
+    if (event.type === 'SCORING_COMPLETE') {
+      events.push('Scoring complete');
+      return {
+        newState: this.state,
+        newPhase: 'round_end',
+        events,
+        branchingPoint: 'DEALER_ROTATION'
+      };
+    }
+    if (event.type === 'ROUND_END') {
+      return this.handleRoundEnd(event, events);
+    }
     events.push('Proceeding to scoring');
     return {
       newState: this.state,
@@ -557,11 +709,12 @@ export class RoundStateMachine {
   /**
    * Handle draw phase
    */
-  private handleDraw(_event: RoundEvent, events: string[]): TransitionResult {
+  private handleDraw(event: RoundEvent, events: string[]): TransitionResult {
     const nagashiPlayers = this.checkNagashiMangan();
     if (nagashiPlayers.length > 0 && this.rules.nagashiMangan.enabled) {
       events.push(`Nagashi mangan by: ${nagashiPlayers.join(', ')}`);
       if (this.rules.nagashiMangan.treatAsWin) {
+        this.lastWinners = [...nagashiPlayers];
         return {
           newState: this.state,
           newPhase: 'scoring',
@@ -569,6 +722,16 @@ export class RoundStateMachine {
           branchingPoint: 'NAGASHI_MANGAN_CHECK'
         };
       }
+    }
+
+    if (event.type === 'ROUND_END') {
+      events.push('Round ended in draw');
+      return {
+        newState: this.state,
+        newPhase: 'round_end',
+        events,
+        branchingPoint: 'HONBA_UPDATE'
+      };
     }
 
     events.push('Round ended in draw');
@@ -593,6 +756,9 @@ export class RoundStateMachine {
         branchingPoint: 'DEALER_ROTATION'
       };
     }
+    if (event.type === 'ROUND_END') {
+      return this.handleRoundEnd(event, events);
+    }
     throw new Error(`Invalid event ${event.type} in scoring phase`);
   }
 
@@ -603,8 +769,20 @@ export class RoundStateMachine {
     if (event.type === 'ROUND_END') {
       events.push('Round ended');
 
+      // 局数・本場・親移動（連荘 / 親流れ）および対局終了（東風戦＝東4局終了、東南戦＝南4局終了）の判定
+      const isGameOver = this.advanceRoundAndDealer(events);
+
       // プレイヤーの手牌・捨て牌をリセット
       this.resetPlayersForNextRound();
+
+      if (isGameOver) {
+        events.push(`Game over (${this.state.gameLength === 'east' ? 'Tonpuusen' : 'Tonnansen'} complete)`);
+        return {
+          newState: this.state,
+          newPhase: 'game_end',
+          events
+        };
+      }
 
       return {
         newState: this.state,
@@ -615,6 +793,120 @@ export class RoundStateMachine {
     throw new Error(`Invalid event ${event.type} in round_end phase`);
   }
 
+  /**
+   * Handle game end phase (reset for a new game on ROUND_END or ROUND_START)
+   */
+  private handleGameEnd(event: RoundEvent, events: string[]): TransitionResult {
+    if (event.type === 'ROUND_END' || event.type === 'ROUND_START') {
+      this.state.round = { wind: 'east', number: 1 };
+      this.state.honba = 0;
+      this.state.riichiSticks = 0;
+      for (const p of this.state.players) {
+        p.score = 25000;
+        p.isDealer = p.seat === 'east';
+      }
+      this.resetPlayersForNextRound();
+      events.push('New game initialized');
+      if (event.type === 'ROUND_START') {
+        return this.handleWaiting(event, events);
+      }
+      return {
+        newState: this.state,
+        newPhase: 'waiting',
+        events
+      };
+    }
+    throw new Error(`Invalid event ${event.type} in game_end phase`);
+  }
+
+  /**
+   * Update honba, dealer continuation, and round number/wind at the end of a round.
+   * Returns true if the entire game (Tonpuusen / Tonnansen) has concluded.
+   */
+  private advanceRoundAndDealer(events: string[]): boolean {
+    const seats: Wind[] = ['east', 'south', 'west', 'north'];
+    const currentDealer = this.state.players.find(p => p.isDealer)?.seat ?? 'east';
+    let dealerContinues = false;
+
+    if (this.lastWinners.length > 0 && !this.lastRoundWasDraw) {
+      if (this.lastWinners.includes(currentDealer)) {
+        // 親の和了 → 連荘・本場+1
+        dealerContinues = true;
+        this.state.honba++;
+        events.push(`Dealer (${currentDealer}) won: renchan (honba -> ${this.state.honba})`);
+      } else {
+        // 子の和了 → 親流れ・本場0リセット
+        dealerContinues = false;
+        this.state.honba = 0;
+        events.push(`Non-dealer won: dealer rotates (honba -> 0)`);
+      }
+    } else {
+      // 流局 → 本場+1、親が聴牌なら連荘、不聴なら親流れ
+      this.state.honba++;
+      const dealerPlayer = this.state.players.find(p => p.seat === currentDealer);
+      const isDealerTenpai =
+        dealerPlayer && dealerPlayer.hand.length > 0
+          ? this.handEvaluator.getWinningTiles(dealerPlayer.hand, dealerPlayer.melds).length > 0
+          : false;
+      dealerContinues = isDealerTenpai;
+      events.push(`Draw: dealer (${currentDealer}) tenpai=${isDealerTenpai} (honba -> ${this.state.honba})`);
+    }
+
+    const gameLength = this.state.gameLength ?? 'south';
+    const maxScore = Math.max(...this.state.players.map(p => p.score));
+    const hasReachedTargetScore = maxScore >= 30000;
+    const isExtensionWind =
+      (gameLength === 'south' && (this.state.round.wind === 'west' || this.state.round.wind === 'north')) ||
+      (gameLength === 'east' && this.state.round.wind !== 'east');
+
+    // 西入（東風戦では南入）中のサドンデス終了判定: 誰かが30,000点以上に到達した時点で即終局
+    if (isExtensionWind && hasReachedTargetScore) {
+      events.push(`Sudden-death extension complete: top score reached ${maxScore} (>= 30,000)`);
+      return true;
+    }
+
+    if (!dealerContinues) {
+      const isRegularFinalWind =
+        (gameLength === 'east' && this.state.round.wind === 'east') ||
+        (gameLength === 'south' && this.state.round.wind === 'south');
+
+      if (this.state.round.number >= 4) {
+        if (isRegularFinalWind) {
+          if (hasReachedTargetScore) {
+            return true; // 30,000点以上のプレイヤーがいるため通常終局
+          }
+          // 全員30,000点未満 → 西入（東風戦では南入）突入！
+          events.push(
+            gameLength === 'south'
+              ? `Entering West round (西入): top score is ${maxScore} (< 30,000)`
+              : `Entering South round (南入): top score is ${maxScore} (< 30,000)`
+          );
+        } else if (isExtensionWind) {
+          // 延長戦の4局目（西4局 / 東風戦の南4局）が終了した場合は30,000点未満でも終局
+          return true;
+        }
+      }
+
+      const nextDealerIdx = (seats.indexOf(currentDealer) + 1) % 4;
+      const nextDealer = seats[nextDealerIdx];
+      for (const p of this.state.players) {
+        p.isDealer = p.seat === nextDealer;
+      }
+
+      if (this.state.round.number < 4) {
+        this.state.round.number++;
+      } else {
+        this.state.round.number = 1;
+        const roundWinds: RoundWind[] = ['east', 'south', 'west', 'north'];
+        const rwIdx = roundWinds.indexOf(this.state.round.wind);
+        this.state.round.wind = roundWinds[(rwIdx + 1) % 4];
+      }
+      events.push(`Advanced to ${this.state.round.wind} ${this.state.round.number} (dealer: ${nextDealer})`);
+    }
+
+    return false;
+  }
+
   // ============================================================
   // 牌操作ロジック
   // ============================================================
@@ -623,6 +915,7 @@ export class RoundStateMachine {
    * 136枚の山牌を生成してシャッフル、王牌(14枚)を分離、ドラ表示牌を設定
    */
   private buildAndShuffleWall(): void {
+    this.resetRoundTracking();
     let tiles: TileInstance[];
 
     if (this.options?.initialWall && this.options.initialWall.length >= 14) {
@@ -659,9 +952,11 @@ export class RoundStateMachine {
     this.state.deadWall = tiles.splice(tiles.length - 14, 14);
     this.state.wall = tiles;  // 残り牌
 
-    // ドラ表示牌: 王牌の先頭
-    this.state.doraIndicators = [this.state.deadWall[0]];
-    this.state.uraDoraIndicators = [this.state.deadWall[1]];
+    // ドラ表示牌・裏ドラ表示牌をdeadWall先頭から分離（カン時に嶺上牌として引かれないようにする）
+    const firstDora = this.state.deadWall.shift()!;
+    const firstUraDora = this.state.deadWall.shift()!;
+    this.state.doraIndicators = [firstDora];
+    this.state.uraDoraIndicators = [firstUraDora];
   }
 
   /**
@@ -728,9 +1023,18 @@ export class RoundStateMachine {
 
 
   /**
+   * プレイヤーの捨牌フリテン状態を更新
+   */
+  private updatePlayerFuriten(player: PlayerState): void {
+    const allDiscards = this.getAllDiscardsForSeat(player.seat);
+    player.furiten = this.handEvaluator.isDiscardFuriten(player.hand, player.melds, allDiscards);
+  }
+
+  /**
    * 次の局に向けてプレイヤー状態をリセット
    */
   private resetPlayersForNextRound(): void {
+    this.resetRoundTracking();
     for (const player of this.state.players) {
       player.hand = [];
       player.discards = [];
@@ -743,6 +1047,7 @@ export class RoundStateMachine {
     this.state.doraIndicators = [];
     this.state.uraDoraIndicators = [];
     this.state.lastDiscard = null;
+    this.state.lastDrawWasRinshan = false;
     this.state.currentTurn = 0;
   }
 
@@ -754,12 +1059,18 @@ export class RoundStateMachine {
   }
 
   /**
-   * 流し満貫チェック
+   * 流し満貫チェック (荒牌平局時かつ自身の捨牌が他家に一度も鳴かれておらず全て么九牌の場合のみ成立)
    */
-  private checkNagashiMangan(): Wind[] {
+  checkNagashiMangan(): Wind[] {
     if (!this.rules.nagashiMangan.enabled) return [];
+    if (this.state.wall.length > 0) return []; // 途中流局や山残存時は不成立
+
     return this.state.players
-      .filter(p => this.isNagashiManganValid(p.discards))
+      .filter(p => {
+        if (this.calledFromSeats.has(p.seat)) return false; // 鳴かれていたら不成立
+        const allDiscards = this.getAllDiscardsForSeat(p.seat);
+        return this.isNagashiManganValid(allDiscards);
+      })
       .map(p => p.seat);
   }
 

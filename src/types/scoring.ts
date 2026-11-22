@@ -126,11 +126,14 @@ export interface WinPayment {
   winner: Wind;
   winType: 'tsumo' | 'ron';
   fromPlayer?: Wind;    // For ron
+  winningTile?: TileInstance;
   payments: Record<Wind, number>;  // How much each player pays (negative) or receives (positive)
   honba: number;        // Honba counter
   riichiSticksWon: number;
   paoPlayer?: Wind;     // If pao applies
   paoPaymentStyle?: 'full' | 'split';
+  handEvaluation?: HandEvaluation;
+  scoreCalculation?: ScoreCalculation;
 }
 
 /**

@@ -1,12 +1,26 @@
 import { RuleConfig } from '../config/rule-config.js';
 import { ScoreCalculation, HandEvaluation, WinPayment, PaoInfo } from '../types/scoring.js';
 import { Wind } from '../types/game-state.js';
+import { HandEvaluator, HandEvaluationContext } from './hand-evaluator.js';
 
 /**
  * Pure scoring engine - no side effects, only calculations
  */
 export class ScoringEngine {
+  private handEvaluator = new HandEvaluator();
+
   constructor(private rules: RuleConfig) { }
+
+  /**
+   * Evaluate a real hand for winning pattern, yaku, fu, and dora
+   */
+  evaluateHand(ctx: HandEvaluationContext): HandEvaluation {
+    return this.handEvaluator.evaluateHand(ctx);
+  }
+
+  getHandEvaluator(): HandEvaluator {
+    return this.handEvaluator;
+  }
 
   /**
    * Calculate score for a winning hand
@@ -235,7 +249,9 @@ export class ScoringEngine {
         fromPlayer: discarder,
         payments: {} as Record<Wind, number>,
         honba,
-        riichiSticksWon: riichiDistribution[winner.wind] || 0
+        riichiSticksWon: riichiDistribution[winner.wind] || 0,
+        handEvaluation: winner.score.hand,
+        scoreCalculation: winner.score
       };
 
       // Calculate base payment
@@ -283,14 +299,17 @@ export class ScoringEngine {
     honba: number,
     riichiSticks: number,
     allSeats: Wind[],
-    pao?: PaoInfo
+    pao?: PaoInfo,
+    dealerSeat: Wind = 'east'
   ): WinPayment {
     const payment: WinPayment = {
       winner,
       winType: 'tsumo',
       payments: {} as Record<Wind, number>,
       honba,
-      riichiSticksWon: riichiSticks
+      riichiSticksWon: riichiSticks,
+      handEvaluation: score.hand,
+      scoreCalculation: score
     };
 
     const honbaPerPlayer = honba * 100;
@@ -334,7 +353,6 @@ export class ScoringEngine {
       } else {
         const dealerPayment = score.nonDealerScore!.tsumoFromDealer + honbaPerPlayer;
         const nonDealerPayment = score.nonDealerScore!.tsumo + honbaPerPlayer;
-        const dealerSeat = allSeats.find(s => this.isDealer(s, allSeats))!;
 
         allSeats.forEach(seat => {
           if (seat === winner) {
@@ -454,7 +472,8 @@ export class ScoringEngine {
     player: Wind,
     isDealer: boolean,
     honba: number,
-    allSeats: Wind[]
+    allSeats: Wind[],
+    dealerSeat: Wind = 'east'
   ): WinPayment {
     const payment: WinPayment = {
       winner: player,
@@ -478,7 +497,6 @@ export class ScoringEngine {
     } else {
       const dealerPayment = 4000 + honbaPerPlayer;
       const nonDealerPayment = 2000 + honbaPerPlayer;
-      const dealerSeat = allSeats.find(s => this.isDealer(s, allSeats))!;
 
       allSeats.forEach(seat => {
         if (seat === player) {
@@ -492,13 +510,5 @@ export class ScoringEngine {
     }
 
     return payment;
-  }
-
-  /**
-   * Helper: Check if seat is dealer
-   */
-  private isDealer(seat: Wind, _allSeats: Wind[]): boolean {
-    // In 4-player, east is always dealer
-    return seat === 'east';
   }
 }
