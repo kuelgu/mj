@@ -1,7 +1,7 @@
 import { RuleConfig } from '../config/rule-config.js';
-import { ScoreCalculation, HandEvaluation, WinPayment, PaoInfo } from '../types/scoring.js';
-import { Wind } from '../types/game-state.js';
-import { HandEvaluator, HandEvaluationContext } from './hand-evaluator.js';
+import { ScoreCalculation, HandEvaluation, WinPayment, PaoInfo, Yaku } from '../types/scoring.js';
+import { Wind, Meld } from '../types/game-state.js';
+import { HandEvaluator, HandEvaluationContext, tileToIndex } from './hand-evaluator.js';
 
 /**
  * Pure scoring engine - no side effects, only calculations
@@ -229,7 +229,8 @@ export class ScoringEngine {
     discarder: Wind,
     honba: number,
     riichiSticks: number,
-    allSeats: Wind[]
+    allSeats: Wind[],
+    nextDealer?: Wind
   ): WinPayment[] {
     const payments: WinPayment[] = [];
 
@@ -238,7 +239,8 @@ export class ScoringEngine {
       winners.map(w => w.wind),
       discarder,
       riichiSticks,
-      allSeats
+      allSeats,
+      nextDealer
     );
 
     for (let i = 0; i < winners.length; i++) {
@@ -262,9 +264,10 @@ export class ScoringEngine {
       if (winner.pao) {
         const paoPayment = this.calculatePaoPayment(
           baseScore + honbaBonus,
-          discarder,
+          winner.wind,
           winner.pao.responsiblePlayer,
-          winner.pao.paymentStyle
+          winner.pao.paymentStyle,
+          [discarder]
         );
         payment.payments = paoPayment;
         payment.paoPlayer = winner.pao.responsiblePlayer;
@@ -283,6 +286,16 @@ export class ScoringEngine {
       payment.payments[winner.wind] += payment.riichiSticksWon * 1000;
 
       payments.push(payment);
+    }
+
+    // to_next_dealer で次期親が勝者にいない場合、供託は場に残して次局へ持ち越す
+    if (
+      this.rules.multipleRon.riichiBetDistribution === 'to_next_dealer' &&
+      nextDealer !== undefined &&
+      !winners.some(w => w.wind === nextDealer) &&
+      payments.length > 0
+    ) {
+      payments[0].riichiSticksCarryOver = riichiSticks;
     }
 
     return payments;
@@ -325,7 +338,8 @@ export class ScoringEngine {
         baseScore,
         winner,
         pao.responsiblePlayer,
-        pao.paymentStyle
+        pao.paymentStyle,
+        allSeats.filter(seat => seat !== winner && seat !== pao.responsiblePlayer)
       );
 
       payment.payments = paoPayment;
@@ -373,6 +387,83 @@ export class ScoringEngine {
   }
 
   /**
+   * G-3: 副露履歴からパオ (責任払い) の責任者を検出する。
+   * 対象役満が config.applyTo に含まれ、かつ成立の決め手となった鳴き副露が
+   * ある場合のみ PaoInfo を返す (全て暗槓・門前の場合は undefined)。
+   */
+  detectPao(melds: Meld[], yaku: Yaku[], winType: 'ron' | 'tsumo'): PaoInfo | undefined {
+    if (!this.rules.pao.enabled) return undefined;
+    const applyTo = this.rules.pao.applyTo;
+    const hasYaku = (t: Yaku['type']) => yaku.some(y => y.type === t);
+
+    const calledMelds = melds.filter(m =>
+      m.calledFrom !== undefined &&
+      (m.type === 'pon' || m.type === 'kan' || m.type === 'kakan')
+    );
+    const isDragonMeld = (m: Meld) => m.tiles.length > 0 && tileToIndex(m.tiles[0]) >= 31;
+    const isWindMeld = (m: Meld) => {
+      if (m.tiles.length === 0) return false;
+      const idx = tileToIndex(m.tiles[0]);
+      return idx >= 27 && idx <= 30;
+    };
+
+    const lastCalledFrom = (list: Meld[]): Wind | undefined => {
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].calledFrom !== undefined) return list[i].calledFrom;
+      }
+      return undefined;
+    };
+
+    // 大三元・大四喜・小四喜: 決め手 (最後に完成した該当副露) を鳴かせた者が責任者
+    if (hasYaku('daisangen') && applyTo.includes('daisangen')) {
+      const responsible = lastCalledFrom(calledMelds.filter(isDragonMeld));
+      if (responsible !== undefined) {
+        return { responsiblePlayer: responsible, yakumanType: 'daisangen', paymentStyle: this.resolvePaoPaymentStyle(winType) };
+      }
+    }
+    if (hasYaku('daisuushi') && applyTo.includes('daisuushi')) {
+      const responsible = lastCalledFrom(calledMelds.filter(isWindMeld));
+      if (responsible !== undefined) {
+        return { responsiblePlayer: responsible, yakumanType: 'daisuushi', paymentStyle: this.resolvePaoPaymentStyle(winType) };
+      }
+    }
+    if (hasYaku('shousuushi') && applyTo.includes('shousuushi')) {
+      const responsible = lastCalledFrom(calledMelds.filter(isWindMeld));
+      if (responsible !== undefined) {
+        return { responsiblePlayer: responsible, yakumanType: 'shousuushi', paymentStyle: this.resolvePaoPaymentStyle(winType) };
+      }
+    }
+
+    // 字一色: 最後の鳴き副露を鳴かせた者が責任者
+    if (hasYaku('tsuuiisou') && (applyTo.includes('tsuuiisou') || applyTo.includes('tsuuiisou_optional'))) {
+      const responsible = lastCalledFrom(calledMelds);
+      if (responsible !== undefined) {
+        return { responsiblePlayer: responsible, yakumanType: 'tsuuiisou', paymentStyle: this.resolvePaoPaymentStyle(winType) };
+      }
+    }
+
+    // 四槓子: 4つ目の槓を鳴かせた者が責任者 (4つ目が暗槓ならパオなし)
+    if (hasYaku('suukantsu') && (applyTo.includes('suukantsu') || applyTo.includes('suukantsu_optional'))) {
+      const kanMelds = melds.filter(m => m.type === 'kan' || m.type === 'ankan' || m.type === 'kakan');
+      if (kanMelds.length >= 4 && kanMelds[3].calledFrom !== undefined) {
+        return { responsiblePlayer: kanMelds[3].calledFrom, yakumanType: 'suukantsu', paymentStyle: this.resolvePaoPaymentStyle(winType) };
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * G-3: config.paymentStyle の解決。'configurable_full_or_split' は
+   * 標準ルールに従いツモ=全額責任払い・ロン=放銃者との折半とする。
+   */
+  resolvePaoPaymentStyle(winType: 'ron' | 'tsumo'): 'full' | 'split' {
+    const style = this.rules.pao.paymentStyle;
+    if (style === 'full' || style === 'split') return style;
+    return winType === 'tsumo' ? 'full' : 'split';
+  }
+
+  /**
    * BRANCHING POINT: RIICHI_BET_DISTRIBUTION
    * Distribute riichi bets among multiple winners
    */
@@ -380,7 +471,8 @@ export class ScoringEngine {
     winners: Wind[],
     discarder: Wind,
     riichiSticks: number,
-    allSeats: Wind[]
+    allSeats: Wind[],
+    nextDealer?: Wind
   ): Record<Wind, number> {
     const distribution: Record<Wind, number> = {
       east: 0,
@@ -389,16 +481,20 @@ export class ScoringEngine {
       north: 0
     };
 
+    const distanceFromDiscarder = (w: Wind): number => {
+      const discarderIndex = allSeats.indexOf(discarder);
+      const winnerIndex = allSeats.indexOf(w);
+      return (winnerIndex - discarderIndex + 4) % 4;
+    };
+
     switch (this.rules.multipleRon.riichiBetDistribution) {
-      case 'seat_order_nearest_to_discarder':
+      case 'seat_order_nearest_to_discarder': {
         // Find closest winner to discarder in seat order
-        const discarderIndex = allSeats.indexOf(discarder);
         let closestWinner: Wind | null = null;
         let minDistance = Infinity;
 
         winners.forEach(w => {
-          const winnerIndex = allSeats.indexOf(w);
-          const distance = (winnerIndex - discarderIndex + 4) % 4;
+          const distance = distanceFromDiscarder(w);
           if (distance < minDistance) {
             minDistance = distance;
             closestWinner = w;
@@ -409,20 +505,35 @@ export class ScoringEngine {
           distribution[closestWinner as Wind] = riichiSticks;
         }
         break;
+      }
 
-      case 'split_equally':
+      case 'split_equally': {
         const perWinner = Math.floor(riichiSticks / winners.length);
         winners.forEach(w => {
           distribution[w as Wind] = perWinner;
         });
+        // G-7: 端数は捨牌者に座席順で最も近い勝者から順に1本ずつ寄せる
+        const remainder = riichiSticks - perWinner * winners.length;
+        const byDistance = [...winners].sort((a, b) => distanceFromDiscarder(a) - distanceFromDiscarder(b));
+        for (let i = 0; i < remainder; i++) {
+          distribution[byDistance[i % byDistance.length]] += 1;
+        }
         break;
+      }
 
-      case 'to_next_dealer':
-        // In this implementation, we don't track next dealer here
-        // This would need game state to determine
-        // For now, give to first winner
-        distribution[winners[0] as Wind] = riichiSticks;
+      case 'to_next_dealer': {
+        // 次期親が勝者にいる場合のみ配分する。いない場合は場に残して
+        // 次局へ持ち越す (呼び出し元が riichiSticksCarryOver を設定する)。
+        const recipient = nextDealer !== undefined && winners.includes(nextDealer)
+          ? nextDealer
+          : nextDealer === undefined
+            ? winners[0]
+            : null;
+        if (recipient) {
+          distribution[recipient as Wind] = riichiSticks;
+        }
         break;
+      }
     }
 
     return distribution;
@@ -430,13 +541,15 @@ export class ScoringEngine {
 
   /**
    * BRANCHING POINT: PAO_PAYMENT_CALCULATION
-   * Calculate payment distribution when pao applies
+   * Calculate payment distribution when pao applies (always zero-sum:
+   * the winner receives exactly what the payers contribute).
    */
   private calculatePaoPayment(
     totalScore: number,
     winner: Wind,
     paoPlayer: Wind,
-    paymentStyle: 'full' | 'split'
+    paymentStyle: 'full' | 'split',
+    otherPayers: Wind[]
   ): Record<Wind, number> {
     const payments: Record<Wind, number> = {
       east: 0,
@@ -445,20 +558,27 @@ export class ScoringEngine {
       north: 0
     };
 
-    if (paymentStyle === 'full') {
+    if (paymentStyle === 'full' || otherPayers.length === 0) {
       // Pao player pays everything
       payments[paoPlayer] = -totalScore;
       payments[winner] = totalScore;
+    } else if (otherPayers.length === 1) {
+      // Ron split: pao player and discarder each pay half (rounded up to 100)
+      const half = Math.ceil(totalScore / 2 / 100) * 100;
+      payments[paoPlayer] -= half;
+      payments[otherPayers[0]] -= half;
+      payments[winner] = half * 2;
     } else {
-      // Split payment
-      const halfScore = Math.ceil(totalScore / 2);
-      payments[paoPlayer] = -halfScore;
-      // Other half comes from discarder or split among non-winners
-      // This depends on whether it's ron or tsumo
-      // Simplified: pao player pays half, winner gets full
-      payments[winner] = totalScore;
-      // The other half is distributed among other players
-      // (implementation detail - would need full game state)
+      // Tsumo split: pao player pays half (rounded up to 100), the other two
+      // players split the rest. The winner receives exactly what was collected.
+      const half = Math.ceil(totalScore / 2 / 100) * 100;
+      payments[paoPlayer] = -half;
+      const rest = totalScore - half;
+      const perOther = Math.ceil(rest / otherPayers.length / 100) * 100;
+      for (const seat of otherPayers) {
+        payments[seat] -= perOther;
+      }
+      payments[winner] = half + perOther * otherPayers.length;
     }
 
     return payments;

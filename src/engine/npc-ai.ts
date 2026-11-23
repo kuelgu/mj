@@ -19,7 +19,8 @@ export class NpcAi {
     discardedTile: TileInstance,
     state: GameState,
     allDiscards: TileInstance[],
-    seatWind: Wind
+    seatWind: Wind,
+    chankan = false
   ): boolean {
     if (!npc.hand || npc.hand.length === 0) return false;
     if (npc.furiten || this.handEvaluator.isDiscardFuriten(npc.hand, npc.melds, allDiscards)) {
@@ -36,7 +37,8 @@ export class NpcAi {
       riichi: npc.riichi.declared,
       doubleRiichi: npc.riichi.doubleRiichi,
       ippatsu: npc.riichi.ippatsu,
-      houtei: state.wall.length === 0 && state.deadWall.length > 0,
+      chankan,
+      houtei: !chankan && state.wall.length === 0 && state.deadWall.length > 0,
       doraIndicators: state.doraIndicators,
       uraDoraIndicators: state.uraDoraIndicators
     });

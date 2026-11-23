@@ -1,6 +1,6 @@
 import { GameState, GamePhase, Wind, DrawType, PlayerState, RoundWind } from '../types/game-state.js';
 import { RuleConfig } from '../config/rule-config.js';
-import { TileInstance } from '../types/tiles.js';
+import { TileInstance, tilesEqual } from '../types/tiles.js';
 import { HandEvaluator } from './hand-evaluator.js';
 
 /**
@@ -20,6 +20,9 @@ export type RoundEvent =
   | { type: 'TSUMO_DECLARE'; player: Wind; tile: TileInstance }
   | { type: 'NAGASHI_MANGAN'; player: Wind }
   | { type: 'EXHAUSTIVE_DRAW'; drawType: DrawType }
+  | { type: 'KYUUSHU_DECLARE'; player: Wind }
+  | { type: 'KAN_COMPLETE' }
+  | { type: 'ABORTIVE_DRAW'; drawType: DrawType }
   | { type: 'MULTIPLE_RON_RESOLVED'; winners: Wind[] }
   | { type: 'SCORING_COMPLETE' }
   | { type: 'ROUND_END' };
@@ -87,7 +90,50 @@ export class RoundStateMachine {
     this.calledFromSeats.clear();
     this.anyCallInRound = false;
     this.state.lastDrawWasRinshan = false;
+    this.state.drawType = null;
+    this.state.kyuushuEligible = [];
+    this.state.pendingKan = null;
+    this.state.pendingRon = null;
     this.allDiscardsBySeat = { east: [], south: [], west: [], north: [] };
+  }
+
+  /**
+   * Whether any pon/chi/kan call has happened this round
+   */
+  hasAnyCall(): boolean {
+    return this.anyCallInRound;
+  }
+
+  /**
+   * Whether a hand qualifies for 九種九牌 (9+ distinct terminal/honor kinds)
+   */
+  isKyuushuHand(hand: TileInstance[]): boolean {
+    const kinds = new Set<string>();
+    for (const t of hand) {
+      if (t.suit === 'honor') {
+        kinds.add(`honor:${t.honorType}`);
+      } else if (t.rank === 1 || t.rank === 9) {
+        kinds.add(`${t.suit}:${t.rank}`);
+      }
+    }
+    return kinds.size >= 9;
+  }
+
+  /**
+   * Count kan melds (kan/ankan/kakan) across all players
+   */
+  countKans(): { total: number; players: Wind[] } {
+    const players = new Set<Wind>();
+    let total = 0;
+    for (const p of this.state.players) {
+      for (const m of p.melds) {
+        if (m.type === 'kan' || m.type === 'ankan' || m.type === 'kakan') {
+          total++;
+          players.add(p.seat);
+        }
+      }
+    }
+    return { total, players: [...players] };
   }
 
   /**
@@ -156,6 +202,51 @@ export class RoundStateMachine {
   }
 
   // ============================================================
+  // 流局ヘルパー
+  // ============================================================
+
+  /**
+   * Transition into the draw phase with a classified draw type
+   */
+  private toDraw(events: string[], drawType: DrawType, branchingPoint: BranchingPoint): TransitionResult {
+    this.state.drawType = drawType;
+    this.state.pendingKan = null;
+    this.state.pendingRon = null;
+    this.lastWinners = [];
+    this.lastRoundWasDraw = true;
+    return {
+      newState: this.state,
+      newPhase: 'draw',
+      events,
+      branchingPoint
+    };
+  }
+
+  /**
+   * 四風連打: first turn, no calls yet, all 4 players discarded the same wind
+   */
+  private checkFourWindAbort(): boolean {
+    if (this.anyCallInRound) return false;
+    const seats: Wind[] = ['east', 'south', 'west', 'north'];
+    for (const s of seats) {
+      if ((this.allDiscardsBySeat[s] ?? []).length !== 1) return false;
+    }
+    const first = this.allDiscardsBySeat['east'][0];
+    if (first.suit !== 'honor' || !['east', 'south', 'west', 'north'].includes(first.honorType ?? '')) {
+      return false;
+    }
+    return seats.every(s => tilesEqual(this.allDiscardsBySeat[s][0], first));
+  }
+
+  /**
+   * 四槓散了: 4+ kans across 2+ players (a lone 4-kan hand may continue for suukantsu)
+   */
+  private checkFourKanAbort(): boolean {
+    const { total, players } = this.countKans();
+    return total >= 4 && players.length >= 2;
+  }
+
+  // ============================================================
   // フェーズハンドラー
   // ============================================================
 
@@ -221,15 +312,8 @@ export class RoundStateMachine {
 
         if (this.state.wall.length === 0) {
           // 山が尽きた → 流局
-          this.lastWinners = [];
-          this.lastRoundWasDraw = true;
           events.push('Wall exhausted during draw');
-          return {
-            newState: this.state,
-            newPhase: 'draw',
-            events,
-            branchingPoint: 'EXHAUSTIVE_DRAW_CHECK'
-          };
+          return this.toDraw(events, 'wall_exhausted', 'EXHAUSTIVE_DRAW_CHECK');
         }
 
         // 山の一番上から1枚ツモる
@@ -244,6 +328,7 @@ export class RoundStateMachine {
       }
 
       case 'DISCARD': {
+        this.assertNoPendingKan();
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
 
@@ -326,16 +411,15 @@ export class RoundStateMachine {
         const nextSeat = this.getNextSeat(event.player);
         this.state.currentPlayer = nextSeat;
 
+        // BRANCHING POINT: ABORTIVE_DRAW_CHECK (四風連打)
+        if (this.checkFourWindAbort()) {
+          events.push('Abortive draw: four winds discarded (四風連打)');
+          return this.toDraw(events, 'four_wind', 'ABORTIVE_DRAW_CHECK');
+        }
+
         // 打牌後に山が尽きていたら流局判定
         if (this.isExhaustiveDraw()) {
-          this.lastWinners = [];
-          this.lastRoundWasDraw = true;
-          return {
-            newState: this.state,
-            newPhase: 'draw',
-            events,
-            branchingPoint: 'NAGASHI_MANGAN_CHECK'
-          };
+          return this.toDraw(events, 'wall_exhausted', 'NAGASHI_MANGAN_CHECK');
         }
 
         return { newState: this.state, newPhase: 'playing', events };
@@ -363,11 +447,15 @@ export class RoundStateMachine {
         };
 
       case 'PON': {
+        this.assertNoPendingKan();
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
+        if (player.riichi.declared) {
+          throw new Error('リーチ中はポンできません');
+        }
 
-        const targetTile = event.tile || this.state.lastDiscard;
-        if (!targetTile) throw new Error('No target tile to call pon on');
+        // G-5: 鳴き対象は直前の捨牌のみ
+        const { tile: targetTile, fromPlayer } = this.resolveCallTarget(event.player, event.tile, 'pon');
 
         // 手牌から同種牌を2枚探す
         const matchingIndices: number[] = [];
@@ -383,17 +471,9 @@ export class RoundStateMachine {
           throw new Error(`Player ${event.player} does not have 2 matching tiles for PON`);
         }
 
-        // 捨て牌を捨てたプレイヤーを特定して、その捨て牌を取り除く
-        let fromPlayer: Wind | undefined;
-        for (const p of this.state.players) {
-          const lastIdx = p.discards.length - 1;
-          if (lastIdx >= 0 && (p.discards[lastIdx].id === targetTile.id || 
-              (p.discards[lastIdx].suit === targetTile.suit && p.discards[lastIdx].rank === targetTile.rank && p.discards[lastIdx].honorType === targetTile.honorType))) {
-            fromPlayer = p.seat;
-            p.discards.splice(lastIdx, 1);
-            break;
-          }
-        }
+        // 捨牌者の河から対象牌を取り除く
+        const discarder = this.state.players.find(p => p.seat === fromPlayer)!;
+        discarder.discards.splice(discarder.discards.length - 1, 1);
 
         // 大きいインデックスからspliceして消費
         const consumed: TileInstance[] = [];
@@ -422,13 +502,25 @@ export class RoundStateMachine {
       }
 
       case 'CHI': {
+        this.assertNoPendingKan();
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
+        if (player.riichi.declared) {
+          throw new Error('リーチ中はチーできません');
+        }
 
-        const targetTile = event.tile || this.state.lastDiscard;
-        if (!targetTile || targetTile.suit === 'honor' || typeof targetTile.rank !== 'number') {
+        // G-5: 鳴き対象は直前の捨牌のみ
+        const { tile: targetTile, fromPlayer: chiFrom } = this.resolveCallTarget(event.player, event.tile, 'chi');
+        if (targetTile.suit === 'honor' || typeof targetTile.rank !== 'number') {
           throw new Error('Invalid target tile for CHI');
         }
+
+        // G-5: チーは上家(直前の座席)の捨牌にのみ成立する
+        const seatOrder: Wind[] = ['east', 'south', 'west', 'north'];
+        if (seatOrder[(seatOrder.indexOf(chiFrom) + 1) % 4] !== event.player) {
+          throw new Error('チーは上家の捨牌にのみできます');
+        }
+        const fromPlayer: Wind = chiFrom;
 
         // 手牌から順子になる2枚を探す
         let consumed: TileInstance[] = [];
@@ -469,16 +561,8 @@ export class RoundStateMachine {
         }
 
         // 直前の打牌者の河から対象牌を除去
-        let fromPlayer: Wind | undefined;
-        for (const p of this.state.players) {
-          const lastIdx = p.discards.length - 1;
-          if (lastIdx >= 0 && (p.discards[lastIdx].id === targetTile.id || 
-              (p.discards[lastIdx].suit === targetTile.suit && p.discards[lastIdx].rank === targetTile.rank))) {
-            fromPlayer = p.seat;
-            p.discards.splice(lastIdx, 1);
-            break;
-          }
-        }
+        const chiDiscarder = this.state.players.find(p => p.seat === fromPlayer)!;
+        chiDiscarder.discards.splice(chiDiscarder.discards.length - 1, 1);
 
         const meld = {
           type: 'chi' as const,
@@ -499,33 +583,49 @@ export class RoundStateMachine {
       }
 
       case 'KAN': {
+        this.assertNoPendingKan();
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
 
-        const targetTile = event.tile || this.state.lastDiscard;
+        const targetTile = event.tile;
         if (!targetTile) throw new Error('No target tile for KAN');
 
         // 加槓チェック (ポン済みの牌に追加)
-        const existingPon = player.melds.find(m => 
-          m.type === 'pon' && 
+        const existingPon = player.melds.find(m =>
+          m.type === 'pon' &&
           m.tiles.some(t => t.suit === targetTile.suit && t.rank === targetTile.rank && t.honorType === targetTile.honorType)
         );
 
         // 手牌内での枚数チェック
-        const handMatches = player.hand.filter(t => 
+        const handMatches = player.hand.filter(t =>
           t.suit === targetTile.suit && t.rank === targetTile.rank && t.honorType === targetTile.honorType
         );
 
         if (existingPon && handMatches.length >= 1) {
           // 加槓 (Kakan)
+          this.assertRiichiKanAllowed(player, 'kakan', handMatches[0]);
           const idx = player.hand.findIndex(t => t.id === handMatches[0].id);
           const [kakanTile] = player.hand.splice(idx, 1);
           existingPon.type = 'kakan';
           existingPon.tiles.push(kakanTile);
           existingPon.kakanTile = kakanTile;
           events.push(`${event.player} called Kakan with ${kakanTile.id}`);
-        } else if (handMatches.length === 4 && this.state.currentPlayer === event.player) {
+
+          this.anyCallInRound = true;
+          this.state.currentPlayer = event.player;
+          this.clearIppatsu();
+
+          // G-2: 加槓牌への槍槓ロン受付ウィンドウを開く。嶺上ツモと新ドラは
+          // KAN_COMPLETE (誰もロンできない場合) まで延期する。
+          this.state.pendingKan = { player: event.player, tile: kakanTile };
+          this.state.lastDiscard = kakanTile;
+          events.push(`Chankan window open on ${kakanTile.id}`);
+          return { newState: this.state, newPhase: 'playing', events };
+        }
+
+        if (handMatches.length === 4 && this.state.currentPlayer === event.player) {
           // 暗槓 (Ankan)
+          this.assertRiichiKanAllowed(player, 'ankan', targetTile);
           const consumed: TileInstance[] = [];
           for (const match of handMatches) {
             const idx = player.hand.findIndex(t => t.id === match.id);
@@ -537,7 +637,11 @@ export class RoundStateMachine {
           });
           events.push(`${event.player} called Ankan with ${targetTile.id}`);
         } else if (handMatches.length >= 3) {
-          // 大明槓 (Daiminkan)
+          // 大明槓 (Daiminkan): G-5 直前の捨牌に対する発声のみ
+          if (player.riichi.declared) {
+            throw new Error('リーチ中は大明槓できません');
+          }
+          const { tile: kanTile, fromPlayer } = this.resolveCallTarget(event.player, event.tile, 'kan');
           const consumed: TileInstance[] = [];
           for (let i = 0; i < 3; i++) {
             const idx = player.hand.findIndex(t => t.id === handMatches[i].id);
@@ -545,54 +649,29 @@ export class RoundStateMachine {
           }
 
           // 捨て牌者の河から除去
-          let fromPlayer: Wind | undefined;
-          for (const p of this.state.players) {
-            const lastIdx = p.discards.length - 1;
-            if (lastIdx >= 0 && (p.discards[lastIdx].id === targetTile.id || 
-                (p.discards[lastIdx].suit === targetTile.suit && p.discards[lastIdx].rank === targetTile.rank && p.discards[lastIdx].honorType === targetTile.honorType))) {
-              fromPlayer = p.seat;
-              p.discards.splice(lastIdx, 1);
-              break;
-            }
-          }
+          const kanDiscarder = this.state.players.find(p => p.seat === fromPlayer)!;
+          kanDiscarder.discards.splice(kanDiscarder.discards.length - 1, 1);
 
           player.melds.push({
             type: 'kan',
-            tiles: [...consumed, targetTile],
+            tiles: [...consumed, kanTile],
             calledFrom: fromPlayer
           });
-          if (fromPlayer) this.calledFromSeats.add(fromPlayer);
-          events.push(`${event.player} called Daiminkan on ${targetTile.id} from ${fromPlayer ?? 'unknown'}`);
+          this.calledFromSeats.add(fromPlayer);
+          events.push(`${event.player} called Daiminkan on ${kanTile.id} from ${fromPlayer}`);
         } else {
           throw new Error(`Player ${event.player} does not have enough tiles for KAN`);
         }
 
         this.anyCallInRound = true;
 
-        // カン後の嶺上牌ツモ (王牌の末尾＝嶺上牌側から取得し、ドラ表示牌と混ざらないようにする)
-        let rinshanTile: TileInstance | undefined;
-        if (this.state.deadWall.length > 0) {
-          rinshanTile = this.state.deadWall.pop();
-        } else if (this.state.wall.length > 0) {
-          rinshanTile = this.state.wall.pop();
+        // BRANCHING POINT: ABORTIVE_DRAW_CHECK (四槓散了)
+        if (this.checkFourKanAbort()) {
+          events.push('Abortive draw: four kans by different players (四槓散了)');
+          return this.toDraw(events, 'four_kan', 'ABORTIVE_DRAW_CHECK');
         }
 
-        if (rinshanTile) {
-          player.hand.push(rinshanTile);
-          this.state.lastDrawWasRinshan = true;
-          events.push(`${event.player} drew rinshan tile: ${rinshanTile.id}`);
-        }
-
-        // 新カンドラ＆カン裏ドラめくり
-        if (this.state.deadWall.length > 0) {
-          const newDora = this.state.deadWall.shift()!;
-          this.state.doraIndicators.push(newDora);
-          events.push(`New dora indicator revealed: ${newDora.id}`);
-        }
-        if (this.state.deadWall.length > 0) {
-          const newUraDora = this.state.deadWall.shift()!;
-          this.state.uraDoraIndicators.push(newUraDora);
-        }
+        this.drawRinshanAndFlipDora(player, events);
 
         this.state.currentPlayer = event.player;
         this.state.lastDiscard = null;
@@ -601,8 +680,37 @@ export class RoundStateMachine {
         return { newState: this.state, newPhase: 'playing', events };
       }
 
+      case 'KAN_COMPLETE': {
+        // G-2: 槍槓ウィンドウの確定 (誰もロンしなかった場合の嶺上ツモ+新ドラ)
+        const pending = this.state.pendingKan;
+        if (!pending) {
+          throw new Error('確定できる加槓がありません');
+        }
+        if (this.state.pendingRon) {
+          throw new Error('ロン収集中のため確定できません');
+        }
+        const player = this.state.players.find(p => p.seat === pending.player);
+        if (!player) throw new Error(`Player ${pending.player} not found`);
+
+        this.state.pendingKan = null;
+        this.state.lastDiscard = null;
+        events.push(`Kakan confirmed for ${pending.player}`);
+
+        // BRANCHING POINT: ABORTIVE_DRAW_CHECK (四槓散了)
+        if (this.checkFourKanAbort()) {
+          events.push('Abortive draw: four kans by different players (四槓散了)');
+          return this.toDraw(events, 'four_kan', 'ABORTIVE_DRAW_CHECK');
+        }
+
+        this.drawRinshanAndFlipDora(player, events);
+        this.state.currentPlayer = pending.player;
+
+        return { newState: this.state, newPhase: 'playing', events };
+      }
+
 
       case 'RIICHI_DECLARE': {
+        this.assertNoPendingKan();
         const player = this.state.players.find(p => p.seat === event.player);
         if (!player) throw new Error(`Player ${event.player} not found`);
         if (player.riichi.declared) {
@@ -626,19 +734,36 @@ export class RoundStateMachine {
         player.score -= 1000;
         this.state.riichiSticks++;
         events.push(`${event.player} declared riichi${player.riichi.doubleRiichi ? ' (double riichi)' : ''}`);
+
+        // BRANCHING POINT: ABORTIVE_DRAW_CHECK (四家立直)
+        if (this.state.players.every(p => p.riichi.declared)) {
+          events.push('Abortive draw: four players declared riichi (四家立直)');
+          return this.toDraw(events, 'four_riichi', 'ABORTIVE_DRAW_CHECK');
+        }
+
         return { newState: this.state, newPhase: 'playing', events };
       }
 
+      case 'KYUUSHU_DECLARE': {
+        // 九種九牌: 配牌時に9種以上の么九牌があった場合のみ、最初の打牌前に宣言できる
+        const player = this.state.players.find(p => p.seat === event.player);
+        if (!player) throw new Error(`Player ${event.player} not found`);
+        if (!this.isKyuushuHand(player.hand)) {
+          throw new Error('九種九牌の条件を満たしていません');
+        }
+        if (this.anyCallInRound) {
+          throw new Error('鳴きが発生したため九種九牌は宣言できません');
+        }
+        if (player.discards.length > 0) {
+          throw new Error('最初の打牌を過ぎたため九種九牌は宣言できません');
+        }
+        events.push(`${event.player} declared nine terminals (九種九牌)`);
+        return this.toDraw(events, 'nine_terminals', 'ABORTIVE_DRAW_CHECK');
+      }
+
       case 'EXHAUSTIVE_DRAW':
-        this.lastWinners = [];
-        this.lastRoundWasDraw = true;
         events.push('Exhaustive draw');
-        return {
-          newState: this.state,
-          newPhase: 'draw',
-          events,
-          branchingPoint: 'NAGASHI_MANGAN_CHECK'
-        };
+        return this.toDraw(events, event.drawType, 'NAGASHI_MANGAN_CHECK');
 
       default:
         return { newState: this.state, newPhase: 'playing', events };
@@ -649,6 +774,31 @@ export class RoundStateMachine {
    * Handle ron declared phase
    */
   private handleRonDeclared(event: RoundEvent, events: string[]): TransitionResult {
+    // G-4: 2人目以降のロン宣言は収集中として受理し、ron_declared に留まる
+    if (event.type === 'RON_DECLARE') {
+      events.push(`${event.player} declared ron (collecting)`);
+      return {
+        newState: this.state,
+        newPhase: 'ron_declared',
+        events,
+        branchingPoint: 'MULTIPLE_RON_CHECK'
+      };
+    }
+    // G-4: 三家和の流局扱い (mode がトリロンを許可しない場合のみ GameRoom が発行する)
+    if (event.type === 'ABORTIVE_DRAW') {
+      const pending = this.state.pendingRon;
+      const tripleRonAbort =
+        event.drawType === 'triple_ron' &&
+        pending !== null &&
+        pending !== undefined &&
+        pending.declarers.length >= 3 &&
+        this.rules.multipleRon.mode !== 'allow_up_to_3';
+      if (!tripleRonAbort) {
+        throw new Error('Invalid ABORTIVE_DRAW in ron_declared phase');
+      }
+      events.push('Abortive draw: triple ron (三家和)');
+      return this.toDraw(events, 'triple_ron', 'ABORTIVE_DRAW_CHECK');
+    }
     if (event.type === 'MULTIPLE_RON_RESOLVED') {
       if (event.winners.length > 0) {
         this.lastWinners = [...event.winners];
@@ -840,6 +990,11 @@ export class RoundStateMachine {
         this.state.honba = 0;
         events.push(`Non-dealer won: dealer rotates (honba -> 0)`);
       }
+    } else if (this.state.drawType && this.state.drawType !== 'wall_exhausted') {
+      // 途中流局 (四風連打・四家立直・四槓散了・九種九牌・三家和) → 連荘・本場+1
+      this.state.honba++;
+      dealerContinues = true;
+      events.push(`Abortive draw (${this.state.drawType}): dealer (${currentDealer}) continues (honba -> ${this.state.honba})`);
     } else {
       // 流局 → 本場+1、親が聴牌なら連荘、不聴なら親流れ
       this.state.honba++;
@@ -999,6 +1154,12 @@ export class RoundStateMachine {
       const extraTile = this.state.wall.shift();
       if (extraTile) dealer.hand.push(extraTile);
     }
+
+    // 九種九牌の対象座席を記録 (クライアント通知用)
+    this.state.kyuushuEligible = seats.filter(seat => {
+      const player = this.state.players.find(p => p.seat === seat);
+      return player !== undefined && this.isKyuushuHand(player.hand);
+    });
   }
 
   /**
@@ -1018,6 +1179,129 @@ export class RoundStateMachine {
       if (p.riichi.declared) {
         p.riichi.ippatsu = false;
       }
+    }
+  }
+
+  /**
+   * G-2: 槍槓ウィンドウ中はロン/確定以外の行動を禁止する
+   */
+  private assertNoPendingKan(): void {
+    if (this.state.pendingKan) {
+      throw new Error('チャンカン確認中のため行動できません');
+    }
+  }
+
+  /**
+   * G-5: 鳴き対象は直前の捨牌 (lastDiscard) のみ。指定牌の一致・河の最新牌で
+   * あること・発声者が捨牌者でないことを厳密に検証する。
+   */
+  private resolveCallTarget(
+    caller: Wind,
+    eventTile: TileInstance | undefined,
+    callType: 'pon' | 'chi' | 'kan'
+  ): { tile: TileInstance; fromPlayer: Wind } {
+    const lastDiscard = this.state.lastDiscard;
+    if (!lastDiscard) {
+      throw new Error(`${callType.toUpperCase()}できる捨牌がありません`);
+    }
+    if (eventTile && eventTile.id !== lastDiscard.id) {
+      throw new Error('指定牌が直前の捨牌と一致しません');
+    }
+    const fromPlayer = this.findLatestDiscarder(lastDiscard);
+    if (!fromPlayer) {
+      throw new Error(`${callType.toUpperCase()}対象の牌が河にありません`);
+    }
+    if (fromPlayer === caller) {
+      throw new Error('自分の捨牌には鳴けません');
+    }
+    return { tile: lastDiscard, fromPlayer };
+  }
+
+  /**
+   * 指定牌を最新の河牌として持つプレイヤー (捨牌者) を返す
+   */
+  private findLatestDiscarder(targetTile: TileInstance): Wind | null {
+    for (const p of this.state.players) {
+      const last = p.discards[p.discards.length - 1];
+      if (last && (last.id === targetTile.id || tilesEqual(last, targetTile))) {
+        return p.seat;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * カン後の嶺上牌ツモと新カンドラ・カン裏ドラめくり
+   */
+  private drawRinshanAndFlipDora(player: PlayerState, events: string[]): void {
+    // 王牌の末尾＝嶺上牌側から取得し、ドラ表示牌と混ざらないようにする
+    let rinshanTile: TileInstance | undefined;
+    if (this.state.deadWall.length > 0) {
+      rinshanTile = this.state.deadWall.pop();
+    } else if (this.state.wall.length > 0) {
+      rinshanTile = this.state.wall.pop();
+    }
+
+    if (rinshanTile) {
+      player.hand.push(rinshanTile);
+      this.state.lastDrawWasRinshan = true;
+      events.push(`${player.seat} drew rinshan tile: ${rinshanTile.id}`);
+    }
+
+    if (this.state.deadWall.length > 0) {
+      const newDora = this.state.deadWall.shift()!;
+      this.state.doraIndicators.push(newDora);
+      events.push(`New dora indicator revealed: ${newDora.id}`);
+    }
+    if (this.state.deadWall.length > 0) {
+      const newUraDora = this.state.deadWall.shift()!;
+      this.state.uraDoraIndicators.push(newUraDora);
+    }
+  }
+
+  /**
+   * G-6: リーチ後のカンは待ちが変わらない場合のみ可能 (送りカン禁止)。
+   * 非リーチ中は何もしない。
+   */
+  private assertRiichiKanAllowed(player: PlayerState, kanKind: 'ankan' | 'kakan', targetTile: TileInstance): void {
+    if (!player.riichi.declared) return;
+
+    const hand = player.hand;
+    const melds = player.melds;
+    if (hand.length === 0) return;
+
+    // ツモ牌 (手牌末尾) を除いた13枚形の待ち集合
+    const drawnTile = hand[hand.length - 1];
+    const drawnIdx = hand.findIndex(t => t.id === drawnTile.id);
+    const hand13 = [...hand.slice(0, drawnIdx), ...hand.slice(drawnIdx + 1)];
+    const waitsBefore = this.handEvaluator.getWinningTiles(hand13, melds);
+    if (waitsBefore.length === 0) return;
+
+    // カン適用後の待ち集合
+    let handAfter: TileInstance[];
+    let meldsAfter = melds;
+    if (kanKind === 'ankan') {
+      const removed = hand.filter(t =>
+        t.suit === targetTile.suit && t.rank === targetTile.rank && t.honorType === targetTile.honorType
+      );
+      handAfter = hand.filter(t => !removed.includes(t));
+      meldsAfter = [...melds, { type: 'ankan' as const, tiles: removed }];
+    } else {
+      const idx = hand.findIndex(t => t.id === targetTile.id);
+      const removeIdx = idx !== -1 ? idx : hand.findIndex(t => tilesEqual(t, targetTile));
+      if (removeIdx === -1) return;
+      handAfter = [...hand.slice(0, removeIdx), ...hand.slice(removeIdx + 1)];
+    }
+    const waitsAfter = this.handEvaluator.getWinningTiles(handAfter, meldsAfter);
+
+    const kinds = (tiles: TileInstance[]) =>
+      new Set(tiles.map(t => `${t.suit}:${t.rank ?? ''}:${t.honorType ?? ''}`));
+    const before = kinds(waitsBefore);
+    const after = kinds(waitsAfter);
+    const same =
+      before.size === after.size && [...before].every(k => after.has(k));
+    if (!same) {
+      throw new Error('リーチ後のカンで待ちが変わるためできません（送りカン禁止）');
     }
   }
 

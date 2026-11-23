@@ -787,9 +787,11 @@ function getRiichiDiscardCandidates(hand14, melds = []) {
     return candidates;
 }
 
-function hasAnyYakuClient(hand14, melds, winTile, isTsumo, player, state) {
+function hasAnyYakuClient(hand14, melds, winTile, isTsumo, player, state, chankan = false) {
     const expected = 14 - (melds ? melds.length : 0) * 3;
     if (!hand14 || hand14.length !== expected) return false;
+    // 槍槓自体が1飜の役になる (形の確認は呼び出し元が済ませている)
+    if (chankan) return true;
     const isMenzen = (melds || []).every(m => m.type === 'ankan');
 
     const counts = new Array(34).fill(0);
@@ -906,7 +908,7 @@ function canTsumoWinClient(player, state) {
     return hasAnyYakuClient(player.hand, player.melds, winTile, true, player, state);
 }
 
-function canRonWinClient(player, targetTile, state) {
+function canRonWinClient(player, targetTile, state, chankan = false) {
     if (!player || !targetTile) return false;
     if (player.furiten) return false;
     const waits = getWinningTileIndicesClient(player.hand, player.melds);
@@ -917,7 +919,7 @@ function canRonWinClient(player, targetTile, state) {
     const discardIndices = new Set((player.discards || []).map(tileToIdx));
     if (waits.some(w => discardIndices.has(w))) return false;
 
-    return hasAnyYakuClient([...player.hand, targetTile], player.melds, targetTile, false, player, state);
+    return hasAnyYakuClient([...player.hand, targetTile], player.melds, targetTile, false, player, state, chankan);
 }
 
 function getAnkanCandidates(hand) {
@@ -1032,6 +1034,41 @@ function renderActionPanel(state) {
         }
 
         case 'playing': {
+            // G-2: 槍槓確認中はロン/パスのみ (ポン・チー・打牌は不可)
+            if (state.pendingKan?.tile) {
+                const kanTile = state.pendingKan.tile;
+                const kanPlayer = state.pendingKan.player;
+                const kanPassed = App.passedDiscardId === kanTile.id;
+                if (kanPlayer !== App.mySeat && !kanPassed) {
+                    if (canRonWinClient(myPlayer, kanTile, state, true)) {
+                        createBtn('ロン', 'act-ron', () => {
+                            sendAction({ type: 'RON_DECLARE', player: App.mySeat, tile: kanTile });
+                        }, `${MahjongTiles.getTileTitle(kanTile)} で槍槓ロン宣言`);
+                    }
+                    createBtn('パス', 'act-pass', () => {
+                        App.passedDiscardId = kanTile.id;
+                        log('action', '槍槓ロンを見送り');
+                        sendMsg({ type: 'pass_call' });
+                        renderActionPanel(state);
+                    }, 'スルーします');
+                } else {
+                    const infoSpan = document.createElement('span');
+                    infoSpan.className = 'waiting-player-status';
+                    infoSpan.textContent = '槍槓確認中...';
+                    dom.actionBtns.appendChild(infoSpan);
+                }
+                break;
+            }
+
+            // G-1: 九種九牌の宣言ボタン (対象者のみ・最初の打牌まで・誰も鳴いていない場合)
+            if ((state.kyuushuEligible || []).includes(App.mySeat) &&
+                (myPlayer?.discards || []).length === 0 &&
+                !(state.players || []).some(p => (p.melds || []).length > 0)) {
+                createBtn('九種九牌', 'act-call', () => {
+                    sendAction({ type: 'KYUUSHU_DECLARE', player: App.mySeat });
+                }, '九種九牌による流局を宣言します');
+            }
+
             const currentPlayer = state.players?.find(p => p.seat === current);
             const lastTile = state.lastDiscard;
             const discarder = getDiscarder(state);
@@ -1170,10 +1207,31 @@ function renderActionPanel(state) {
         }
 
 
-        case 'ron_declared':
-            createBtn('ロン確定 (単独)', 'act-ron',
-                () => sendAction({ type: 'MULTIPLE_RON_RESOLVED', winners: [state.currentPlayer || App.mySeat || 'east'] }));
+        case 'ron_declared': {
+            // G-4: ロン収集中は追加宣言/パスを受け付ける (確定はサーバーが自動で行う)
+            const pending = state.pendingRon;
+            const alreadyDeclared = (pending?.declarers || []).some(d => d.wind === App.mySeat);
+            if (pending?.tile && !alreadyDeclared && pending.discarder !== App.mySeat &&
+                App.passedDiscardId !== pending.tile.id &&
+                canRonWinClient(myPlayer, pending.tile, state, Boolean(pending.chankan))) {
+                createBtn('ロン', 'act-ron', () => {
+                    sendAction({ type: 'RON_DECLARE', player: App.mySeat, tile: pending.tile });
+                }, `${MahjongTiles.getTileTitle(pending.tile)} でロン宣言`);
+                createBtn('パス', 'act-pass', () => {
+                    App.passedDiscardId = pending.tile.id;
+                    log('action', 'ロンをパス');
+                    sendMsg({ type: 'pass_call' });
+                    renderActionPanel(state);
+                }, 'スルーします');
+            } else {
+                const infoSpan = document.createElement('span');
+                infoSpan.className = 'waiting-player-status';
+                const count = pending?.declarers?.length ?? 0;
+                infoSpan.textContent = count > 0 ? `ロン宣言受付中 (${count}人)...` : 'ロン宣言受付中...';
+                dom.actionBtns.appendChild(infoSpan);
+            }
             break;
+        }
 
         case 'tsumo_declared':
             createBtn('精算へ進む', 'act-tsumo',

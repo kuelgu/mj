@@ -21,21 +21,31 @@
 ```
 src/
 ├── config/
-│   ├── rule-config.ts       # RuleConfig型定義とバリデーション
-│   └── rule-config.test.ts  # 設定のテスト
+│   └── rule-config.ts       # RuleConfig型定義とバリデーション
 ├── types/
 │   ├── tiles.ts             # 牌の型定義
 │   ├── game-state.ts        # ゲーム状態の型定義
 │   └── scoring.ts           # 点数計算の型定義
 ├── engine/
-│   ├── round-state-machine.ts      # 状態遷移マシン
-│   ├── round-state-machine.test.ts
-│   ├── scoring-engine.ts           # 純粋な点数計算エンジン
-│   └── scoring-engine.test.ts
+│   ├── round-state-machine.ts  # 局進行の状態遷移マシン
+│   ├── hand-evaluator.ts       # 和了・役・符・ドラ判定
+│   ├── scoring-engine.ts       # 純粋な点数計算エンジン
+│   └── npc-ai.ts               # NPCの打牌・鳴き・和了判断
 ├── server/
-│   ├── game-room.ts         # ゲームルーム管理
+│   ├── game-room.ts         # ゲームルーム管理(NPC補充・自動進行)
 │   └── websocket-server.ts  # WebSocketサーバー
 └── index.ts                 # エントリーポイント
+test/
+├── config/                  # ルール設定のテスト
+├── engine/                  # エンジンの単体テスト
+├── server/                  # サーバー・ルームのテスト
+├── ui/                      # Playwright 4人対戦UIテスト(別実行)
+└── runner.ts                # 単体テストランナー
+client/                      # ブラウザ用Webクライアント(ビルド不要)
+rules/
+└── default.rule.json        # 既定ルール設定(Single Source of Truth)
+docs/
+└── spec-gaps.md             # 仕様ギャップ一覧
 ```
 
 ## 状態遷移と分岐点
@@ -221,8 +231,11 @@ waiting → dealing → playing → {ron_declared, tsumo_declared, draw} → sco
 # 依存関係のインストール
 npm install
 
-# すべてのテストを実行
+# すべての単体テストを実行
 npm test
+
+# 型検査(src + test)
+npm run typecheck
 
 # ビルド
 npm run build
@@ -233,6 +246,23 @@ npm start
 # 開発モード（ホットリロード）
 npm run dev
 ```
+
+### UIテスト(Playwright 4人対戦)
+
+`test/ui/four-players.test.ts` は別実行です。以下の3点を準備してから実行します。
+
+```bash
+# 1. クライアント配信サーバー(別ターミナル)
+python3 -m http.server 3000 -d client
+
+# 2. デバッグメッセージ有効のWebSocketサーバー(別ターミナル)
+MJ_ENABLE_DEBUG_MESSAGES=1 npm run dev
+
+# 3. UIテスト実行
+npm run test:ui
+```
+
+初回は `npx playwright install chromium` でブラウザの導入が必要です。
 
 ## 使用方法
 
@@ -276,6 +306,14 @@ WebSocketクライアントから以下のメッセージ形式で接続：
   "type": "get_state"
 }
 ```
+
+#### その他のメッセージ
+
+- `pass_call`: 鳴き・ロン見送りの宣言
+- `set_game_length`: 対局形式の変更(`east` = 東風戦、`south` = 東南戦)
+- `set_wall` / `set_matchmaking_timeout`: テスト専用のデバッグメッセージ。
+  既定では無効であり、有効化にはサーバー起動時に `MJ_ENABLE_DEBUG_MESSAGES=1` が必要です。
+  本番環境では絶対に有効化しないでください。
 
 ### サーバーメッセージ
 

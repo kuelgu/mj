@@ -24,14 +24,10 @@
     "allowSyntheticDefaultImports": true
   },
   "include": [
-    "src/**/*",
-    "test/engine/round-state-machine.test.ts",
-    "test/engine/scoring-engine.test.ts",
-    "test/config/rule-config.test.ts"
+    "src/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist",
-    "**/*.test.ts"
+    "dist"
   ]
 }

@@ -130,6 +130,7 @@ export interface WinPayment {
   payments: Record<Wind, number>;  // How much each player pays (negative) or receives (positive)
   honba: number;        // Honba counter
   riichiSticksWon: number;
+  riichiSticksCarryOver?: number;  // Sticks left on the table (to_next_dealer)
   paoPlayer?: Wind;     // If pao applies
   paoPaymentStyle?: 'full' | 'split';
   handEvaluation?: HandEvaluation;

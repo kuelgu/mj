@@ -1,4 +1,5 @@
 import { TileInstance } from './tiles.js';
+import type { HandEvaluation, PaoInfo } from './scoring.js';
 
 /**
  * Player seat/wind position
@@ -113,6 +114,35 @@ export type ActionType =
   | 'kyuushu_kyuuhai';  // Nine terminals abort
 
 /**
+ * Pending kakan (加槓) awaiting chankan (槍槓) ron checks.
+ * While set, the kakan tile behaves like a discard for ron purposes only.
+ */
+export interface PendingKanState {
+  player: Wind;
+  tile: TileInstance;
+}
+
+/**
+ * A validated ron declarer waiting in the multiple-ron collection window
+ */
+export interface PendingRonDeclarer {
+  wind: Wind;
+  handEvaluation: HandEvaluation;
+  paoInfo?: PaoInfo;
+}
+
+/**
+ * Multiple-ron declaration collection state (G-4).
+ * Created on the first RON_DECLARE, resolved once no more declarers are pending.
+ */
+export interface PendingRonState {
+  discarder: Wind;
+  tile: TileInstance;
+  chankan: boolean;
+  declarers: PendingRonDeclarer[];
+}
+
+/**
  * Game state
  */
 export interface GameState {
@@ -143,6 +173,14 @@ export interface GameState {
   // Game phase
   phase: GamePhase;
   autoStartDeadline?: number | null;
+
+  // Draw classification (set when entering 'draw', cleared on new round)
+  drawType?: DrawType | null;
+  // Seats eligible to declare 九種九牌 (computed at deal time)
+  kyuushuEligible?: Wind[];
+  // Open chankan window / ron collection window (G-2, G-4)
+  pendingKan?: PendingKanState | null;
+  pendingRon?: PendingRonState | null;
 
   // Pending actions (for multiple ron, etc.)
   pendingActions: PendingAction[];

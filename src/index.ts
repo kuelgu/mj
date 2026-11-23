@@ -24,7 +24,14 @@ function main() {
     console.log(`  - Nagashi Mangan: ${rules.nagashiMangan.enabled ? 'enabled' : 'disabled'}`);
 
     // Start WebSocket server
-    const server = new MahjongWebSocketServer(PORT);
+    // Debug messages (set_wall, set_matchmaking_timeout) stay disabled unless
+    // explicitly enabled for automated tests.
+    const enableDebugMessages = process.env.MJ_ENABLE_DEBUG_MESSAGES === '1';
+    const server = new MahjongWebSocketServer(PORT, { enableDebugMessages });
+
+    if (enableDebugMessages) {
+      console.log('WARNING: Debug messages are ENABLED (MJ_ENABLE_DEBUG_MESSAGES=1). Do not use in production.');
+    }
 
     console.log(`\nServer is running on ws://localhost:${PORT}`);
     console.log('Waiting for connections...\n');

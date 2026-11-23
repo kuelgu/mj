@@ -28,6 +28,12 @@ export type ServerMessage =
 export interface WebSocketServerOptions {
   /** Matchmaking wait time (ms) before replenishing empty seats with NPCs and auto-starting (default: 60000 = 1 minute) */
   matchmakingTimeoutMs?: number;
+  /**
+   * Allow debug/test-only messages (`set_wall`, `set_matchmaking_timeout`).
+   * MUST stay false in production: they let any client rewrite the wall.
+   * Enable only for automated tests via MJ_ENABLE_DEBUG_MESSAGES=1.
+   */
+  enableDebugMessages?: boolean;
 }
 
 /**
@@ -41,6 +47,7 @@ export class MahjongWebSocketServer {
   private npcTimers: Map<string, NodeJS.Timeout>;
   private matchmakingTimers: Map<string, NodeJS.Timeout>;
   private matchmakingTimeoutMs: number;
+  private enableDebugMessages: boolean;
 
   constructor(port: number, options?: WebSocketServerOptions) {
     this.wss = new WebSocketServer({ port });
@@ -49,6 +56,7 @@ export class MahjongWebSocketServer {
     this.npcTimers = new Map();
     this.matchmakingTimers = new Map();
     this.matchmakingTimeoutMs = options?.matchmakingTimeoutMs ?? 60_000;
+    this.enableDebugMessages = options?.enableDebugMessages ?? false;
 
     this.wss.on('connection', (ws) => {
       this.handleConnection(ws);
@@ -133,10 +141,18 @@ export class MahjongWebSocketServer {
         break;
 
       case 'set_wall':
+        if (!this.enableDebugMessages) {
+          this.sendError(ws, 'Debug messages are disabled on this server');
+          break;
+        }
         this.handleSetWall(ws, message.wall);
         break;
 
       case 'set_matchmaking_timeout':
+        if (!this.enableDebugMessages) {
+          this.sendError(ws, 'Debug messages are disabled on this server');
+          break;
+        }
         this.handleSetMatchmakingTimeout(ws, message.timeoutMs);
         break;
 
@@ -193,7 +209,9 @@ export class MahjongWebSocketServer {
     const isNewRoom = !this.rooms.has(roomId);
     // Create room if it doesn't exist
     if (isNewRoom) {
-      const room = new GameRoom('rules/default.rule.json');
+      const room = new GameRoom('rules/default.rule.json', {
+        enableFixedTestSeats: this.enableDebugMessages
+      });
       this.rooms.set(roomId, room);
       console.log(`Created room: ${roomId}`);
     }
@@ -389,6 +407,18 @@ export class MahjongWebSocketServer {
     if (!room) return;
 
     room.markPlayerPassedCall(connection.playerId);
+    // G-2/G-4: パスにより保留中のロン収集・槍槓ウィンドウが進む場合がある
+    const followUp = room.resolvePendingDeclarations();
+    if (followUp.length > 0) {
+      this.broadcastToRoom(connection.roomId, {
+        type: 'game_update',
+        messages: followUp
+      });
+      this.broadcastToRoom(connection.roomId, {
+        type: 'state',
+        state: room.getState()
+      });
+    }
     this.scheduleNpcTurn(connection.roomId, 80);
   }
 
@@ -538,6 +568,17 @@ export class MahjongWebSocketServer {
    */
   getRoom(roomId: string): GameRoom | undefined {
     return this.rooms.get(roomId);
+  }
+
+  /**
+   * Get the port the server is listening on (useful when port 0 was specified)
+   */
+  getPort(): number {
+    const addr = this.wss.address();
+    if (addr && typeof addr === 'object') {
+      return addr.port;
+    }
+    throw new Error('Server is not listening yet');
   }
 
   /**

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "test": "node --loader ts-node/esm --test test/runner.ts",
     "test:watch": "node --loader ts-node/esm --test --watch test/runner.ts",
     "test:ui": "tsx test/ui/four-players.test.ts",
